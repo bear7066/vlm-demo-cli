@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vlm-demo</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>vlm&#8209;demo</h1>
+      <div class="pill" id="status" data-state="loading">connecting…</div>
+    </header>
+
+    <main>
+      <section class="stage">
+        <video id="video" src="/api/video" preload="auto" playsinline controls></video>
+        <div class="timeline" id="timeline" title="one mark per inference pass"></div>
+        <div class="controls">
+          <button id="start" disabled>Start</button>
+          <span class="counter" id="counter">0 / 0 passes</span>
+          <span class="clock" id="clock">0.0s</span>
+        </div>
+      </section>
+
+      <section class="side">
+        <div class="card">
+          <div class="field">
+            <span class="label">prompt</span>
+            <p class="prompt" id="prompt">…</p>
+          </div>
+          <div class="field row">
+            <div>
+              <span class="label">model</span>
+              <p class="mono" id="model">…</p>
+            </div>
+            <div>
+              <span class="label">backend</span>
+              <p class="mono" id="backend">…</p>
+            </div>
+          </div>
+          <div class="field">
+            <span class="label">sampling</span>
+            <p class="mono" id="sampling">…</p>
+          </div>
+        </div>
+
+        <div class="feed" id="feed">
+          <p class="empty" id="empty">Responses appear here, one per inference pass.</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,257 @@
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-2: #1c232d;
+  --border: #2a3341;
+  --text: #e6edf3;
+  --muted: #8b96a5;
+  --accent: #5b9dff;
+  --hit: #ff6b6b;
+  --hit-bg: #2a1a1d;
+  --ok: #4ec9a0;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.pill {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.pill[data-state="running"] {
+  color: var(--ok);
+  border-color: #285045;
+}
+
+.pill[data-state="error"] {
+  color: var(--hit);
+  border-color: #52282c;
+}
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
+  gap: 20px;
+  padding: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+video {
+  width: 100%;
+  display: block;
+  border-radius: 10px 10px 0 0;
+  background: #000;
+}
+
+.timeline {
+  position: relative;
+  height: 8px;
+  background: var(--panel);
+  border-radius: 0 0 10px 10px;
+  overflow: hidden;
+}
+
+.timeline i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  margin-left: -1px;
+  background: var(--muted);
+}
+
+.timeline i.hit {
+  background: var(--hit);
+  width: 4px;
+}
+
+.timeline i.skip {
+  background: var(--border);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 2px;
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 22px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #08101f;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.counter,
+.clock {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.clock {
+  margin-left: auto;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.field + .field {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.field.row {
+  display: flex;
+  gap: 24px;
+}
+
+.label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.card p {
+  margin: 4px 0 0;
+}
+
+.prompt {
+  font-size: 14px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+}
+
+.feed {
+  margin-top: 16px;
+  max-height: 62vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.row {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+
+.row.pending {
+  opacity: 0.65;
+}
+
+.row.hit {
+  border-left-color: var(--hit);
+  background: var(--hit-bg);
+}
+
+.row.skip,
+.row.err {
+  background: transparent;
+}
+
+.row.err {
+  border-left-color: var(--hit);
+}
+
+.row .meta {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.row .meta .idx {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.row .text {
+  margin: 3px 0 0;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.row.skip .text,
+.row.pending .text {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.dots::after {
+  content: "";
+  animation: dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes dots {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75% { content: "..."; }
+}
