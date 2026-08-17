@@ -28,16 +28,17 @@ gpu = [
 vlm-demo = "vlm_demo.cli:main"
 
 # PyPI now ships torch built for CUDA 13, which dropped Volta (sm_70) and needs a 580+ driver.
-# These machines are V100s on a 12.x driver, so the gpu extra is pinned to the CUDA 12.6 index.
-# On other hardware, drop this block (or point it at a different /whl/<backend> index).
+# The x86_64 machines are V100s on a 12.x driver, so the gpu extra is pinned to the CUDA 12.6
+# index there. The cu126 aarch64 wheels only ship sm_80/sm_90 kernels, which breaks Blackwell
+# (GB10 / DGX Spark, sm_121) — aarch64 uses the default PyPI CUDA 13 wheels instead.
 [[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
-torchvision = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
+torchvision = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
 
 [dependency-groups]
 dev = [
