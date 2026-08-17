@@ -52,6 +52,7 @@ The backend is chosen automatically from your flags, or forced with `--backend`.
 | --- | --- | --- |
 | `mock` | `--model mock…` | No GPU, deterministic. Use it to demo/verify the whole pipeline. |
 | `openai-compat` | `--base-url` is set (or `VLM_BASE_URL`) | Any `/v1/chat/completions` server: vLLM, Ollama, OpenRouter, … |
+| `vllm` | `--backend vllm` | `openai-compat` plus: waits for the server, then runs a warmup pass so the first window is fast. `--base-url` defaults to `http://localhost:8000`. |
 | `transformers` | anything else (a HuggingFace repo id) | Loads the model in-process with `transformers`. |
 
 ```bash
@@ -67,6 +68,31 @@ uv run vlm-demo -i ./video.mp4 -p "…" \
 uv sync --extra gpu
 uv run vlm-demo -i ./video.mp4 -p "…" -m google/gemma-4-e4b-it --backend transformers
 ```
+
+## vLLM in Docker
+
+```bash
+# just the model server (waits for readiness, sends a warmup request):
+./scripts/run-vllm.sh [model]
+uv run vlm-demo -i ./vids/fall02.mp4 -p "…" --backend vllm \
+  -m THChou1220/gemma-4-e2b-kinetics54K-enhanced-fall_FFT
+
+# the whole stack: vLLM + this app on a private compose network, UI on port 3000
+./scripts/run-stack.sh          # = docker compose up --build
+```
+
+The gemma-4-e2b finetune checkpoint can't be served as-is: transformers deduplicates the tied
+KV tensors of the last `num_kv_shared_layers` layers on save, and vLLM then fails with
+*"Following weights were not initialized from checkpoint"*. `scripts/merge-base.py` copies
+those tensors back from `google/gemma-4-E2B-it` into `models/gemma-4-e2b-fall-merged/`;
+`run-stack.sh` runs it automatically, and both scripts serve the merged copy under the
+original model name so `-m` stays the same.
+
+Both are tuned via env vars — `MODEL`, `VIDEO` (a file in `./vids`), `PROMPT`, `VLLM_IMAGE`
+(default: `vllm/vllm-openai:gemma4-cu130`, the local DGX Spark build), `HF_TOKEN`. The `vllm`
+backend polls `/v1/models` until the server is up (weights can take minutes to load) and then
+sends one dummy request with `--num-frames` grey frames at `--frame-max-size`, so processor
+init and CUDA graph capture are paid before your first real window.
 
 ## Pacing
 

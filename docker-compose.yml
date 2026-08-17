@@ -1,0 +1,65 @@
+# vLLM backend + the demo app on a private network; only the app's port 3000 is published.
+# Override with env vars: MODEL, VIDEO, PROMPT, VLLM_IMAGE, HF_TOKEN.
+
+x-model: &model ${MODEL:-THChou1220/gemma-4-e2b-kinetics54K-enhanced-fall_FFT}
+
+services:
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:gemma4-cu130}
+    command:
+      # The merged checkpoint (scripts/merge-base.py) — the raw finetune is missing
+      # its KV-shared layers' tensors and vLLM refuses to load it. Served under the
+      # original model name so the app's -m flag needs no change.
+      - ${MODEL_PATH:-/models/gemma-4-e2b-fall-merged}
+      - --served-model-name
+      - *model
+      - --host
+      - 0.0.0.0
+      - --max-model-len
+      - "8192"
+      # video: 0 — we only send images, and the video profiling path trips a CUDA
+      # "operation not permitted" on GB10
+      - --limit-mm-per-prompt
+      - '{"image": 16, "video": 0}'
+    gpus: all
+    ipc: host
+    environment:
+      - HF_TOKEN
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./models:/models:ro
+    networks: [vlm]
+
+  app:
+    build: .
+    command:
+      - -i
+      - /vids/${VIDEO:-fall02.mp4}
+      - -p
+      - ${PROMPT:-Describe the main action briefly in 2~6 words.}
+      - -m
+      - *model
+      - --backend
+      - vllm
+      - --base-url
+      - http://vllm:8000
+      - --pace
+      - complete
+      - --window-sec
+      - "3.0"
+      - --pass-gap
+      - "1.5"
+      - --highlight-regex
+      - (?i)fall(s|ing|en)?|slip(s|ped|ping)?|struggl(e|es|ing)
+      - --host
+      - 0.0.0.0
+      - --no-open
+    volumes:
+      - ./vids:/vids:ro
+    ports:
+      - "3000:3000"
+    depends_on: [vllm]  # the app's vllm backend waits + warms up before the first pass
+    networks: [vlm]
+
+networks:
+  vlm: {}
