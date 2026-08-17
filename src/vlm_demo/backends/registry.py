@@ -29,6 +29,19 @@ def create_backend(config: RunConfig) -> VLMBackend:
                 max_tokens=config.max_tokens,
                 temperature=config.temperature,
             )
+        case BackendKind.VLLM:
+            from vlm_demo.backends.vllm import VLLMBackend
+
+            return VLLMBackend(
+                config.model,
+                base_url=config.base_url,  # defaults to http://localhost:8000
+                api_key=config.api_key,
+                timeout=config.infer_timeout,
+                max_tokens=config.max_tokens,
+                temperature=config.temperature,
+                warmup_frames=config.num_frames,
+                warmup_frame_size=config.frame_max_size,
+            )
         case BackendKind.TRANSFORMERS:
             from vlm_demo.backends.transformers_local import TransformersBackend
 

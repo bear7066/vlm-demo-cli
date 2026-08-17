@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 
@@ -153,4 +154,50 @@ async def test_openai_compat_reports_unexpected_payloads():
     backend = OpenAICompatBackend("m", base_url="http://localhost:8000", client=client)
     with pytest.raises(BackendError, match="unexpected response shape"):
         await backend.infer("p", make_frames(), Window(1, 0.0, 1.0))
+    await client.aclose()
+
+
+# ---------------------------------------------------------------- vllm
+
+
+async def test_vllm_prepare_waits_for_ready_then_warms_up(monkeypatch):
+    from vlm_demo.backends.vllm import VLLMBackend
+
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda _: real_sleep(0))
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.url.path == "/v1/models":
+            # not up yet on the first poll
+            return httpx.Response(503) if len(calls) == 1 else httpx.Response(200, json={})
+        body = json.loads(request.content)
+        assert body["model"] == "m"
+        images = [p for p in body["messages"][0]["content"] if p["type"] == "image_url"]
+        assert len(images) == 4
+        assert images[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://vllm:8000/v1"
+    )
+    backend = VLLMBackend(
+        "m", base_url="http://vllm:8000", warmup_frames=4, warmup_frame_size=64, client=client
+    )
+    await backend.prepare()
+    assert calls == ["GET /v1/models", "GET /v1/models", "POST /v1/chat/completions"]
+    await client.aclose()
+
+
+async def test_vllm_ready_timeout_raises():
+    from vlm_demo.backends.vllm import VLLMBackend
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+        base_url="http://vllm:8000/v1",
+    )
+    backend = VLLMBackend("m", base_url="http://vllm:8000", ready_timeout=0.0, client=client)
+    with pytest.raises(BackendError, match="not ready"):
+        await backend.prepare()
     await client.aclose()

@@ -26,6 +26,7 @@ class Pace(StrEnum):
 class BackendKind(StrEnum):
     MOCK = "mock"
     OPENAI_COMPAT = "openai-compat"
+    VLLM = "vllm"
     TRANSFORMERS = "transformers"
 
 
