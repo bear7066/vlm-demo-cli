@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
@@ -29,9 +30,13 @@ class Session:
     """One run: its config, its state, and every event it has produced so far.
 
     New connections (and page refreshes) replay :meth:`history`, so the feed survives a reload.
+    The selected video can change while the process lives (the user picks another one from the
+    ``--input`` directory), which starts the feed over — see :meth:`retarget`.
     """
 
-    def __init__(self, config: RunConfig, video: VideoMeta, backend_name: str) -> None:
+    def __init__(
+        self, config: RunConfig, backend_name: str, video: VideoMeta | None = None
+    ) -> None:
         self.config = config
         self.video = video
         self.backend_name = backend_name
@@ -44,6 +49,7 @@ class Session:
 
     def describe(self) -> SessionEvent:
         cfg = self.config
+        video = self.video
         return SessionEvent(
             prompt=cfg.prompt,
             model=cfg.model,
@@ -53,16 +59,21 @@ class Session:
             pass_gap=cfg.pass_gap,
             pace=cfg.pace.value,
             highlight_regex=cfg.highlight_regex,
-            total_passes=cfg.total_passes(self.video.duration),
-            video=VideoInfo(
-                filename=self.video.path.name,
-                duration=self.video.duration,
-                fps=self.video.fps,
-                width=self.video.width,
-                height=self.video.height,
-                frame_count=self.video.frame_count,
-            ),
+            total_passes=cfg.total_passes(video.duration) if video else 0,
+            video=None if video is None else video_info(video),
         )
+
+    async def retarget(self, video: VideoMeta | None, state: RunState, detail: str = "") -> None:
+        """Point the session at another video: drop the old feed and announce the new one.
+
+        The history is cleared because every event in it describes the previous video's
+        timeline; pages that reconnect must not replay it against the new one. The new
+        description is not recorded either — every connection is sent a fresh one anyway.
+        """
+        self.video = video
+        self._history.clear()
+        await self.publish(self.describe(), record=False)
+        await self.set_state(state, detail)
 
     def matches(self, text: str) -> bool:
         """Whether a response should be highlighted in the UI."""
@@ -81,11 +92,17 @@ class Session:
     def history(self) -> list[dict[str, Any]]:
         return list(self._history)
 
-    async def publish(self, event: BaseModel) -> None:
+    async def publish(self, event: BaseModel, *, record: bool = True) -> None:
+        """Fan an event out to every open page, and (by default) keep it for replay.
+
+        ``record=False`` is for events that are re-sent in full on every connection anyway —
+        the library listing — which would otherwise pile up in the history.
+        """
         payload = dump(event)
-        self._history.append(payload)
-        if len(self._history) > HISTORY_LIMIT:
-            del self._history[: len(self._history) - HISTORY_LIMIT]
+        if record:
+            self._history.append(payload)
+            if len(self._history) > HISTORY_LIMIT:
+                del self._history[: len(self._history) - HISTORY_LIMIT]
         for queue in list(self._subscribers):
             try:
                 queue.put_nowait(payload)
@@ -96,3 +113,20 @@ class Session:
     async def set_state(self, state: RunState, detail: str = "") -> None:
         self.state = state
         await self.publish(StatusEvent(state=state, detail=detail))
+
+
+def video_info(meta: VideoMeta) -> VideoInfo:
+    """Describe a probed video for the page, including where to stream it from.
+
+    The ``v=`` stamp changes when the file does, so re-uploading over a name the browser has
+    already cached still plays the new bytes.
+    """
+    return VideoInfo(
+        filename=meta.path.name,
+        url=f"/api/video/{quote(meta.path.name)}?v={int(meta.path.stat().st_mtime)}",
+        duration=meta.duration,
+        fps=meta.fps,
+        width=meta.width,
+        height=meta.height,
+        frame_count=meta.frame_count,
+    )

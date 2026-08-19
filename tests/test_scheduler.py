@@ -56,12 +56,17 @@ class SpeedClock:
 
 
 def build(config, clock, latency: float = 0.0):
-    source = VideoSource(config.input, max_size=64)
+    source = VideoSource(only_video(config.input), max_size=64)
     meta = source.open()
     backend = MockBackend(detect_at=config.mock_detect_at, latency=latency)
-    session = Session(config, meta, backend.name)
+    session = Session(config, backend.name, meta)
     scheduler = Scheduler(config, session, source, backend, clock)
     return source, session, scheduler, meta
+
+
+def only_video(directory):
+    """The single clip the ``--input`` directory fixture holds."""
+    return next(p for p in sorted(directory.iterdir()) if p.suffix == ".mp4")
 
 
 def of_type(session: Session, kind: str) -> list[dict]:

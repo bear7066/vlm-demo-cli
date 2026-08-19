@@ -40,9 +40,9 @@ def test_unknown_backend_is_rejected():
         resolve_backend_kind("magic", "m", None)
 
 
-def test_openai_compat_requires_a_base_url(clip):
+def test_openai_compat_requires_a_base_url(library):
     with pytest.raises(ConfigError, match="needs --base-url"):
-        RunConfig(input=clip, prompt="p", model="m", backend=BackendKind.OPENAI_COMPAT)
+        RunConfig(input=library, prompt="p", model="m", backend=BackendKind.OPENAI_COMPAT)
 
 
 def test_registry_builds_the_configured_backend(make_config):

@@ -19,6 +19,7 @@ from vlm_demo.config import (
     RunConfig,
     resolve_backend_kind,
 )
+from vlm_demo.library import VideoLibrary
 from vlm_demo.server import create_app
 
 app = typer.Typer(
@@ -32,7 +33,8 @@ LOOPBACK = {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
 @app.command()
 def run(
     input: Annotated[
-        Path, typer.Option("--input", "-i", help="Video file to play and analyse.")
+        Path,
+        typer.Option("--input", "-i", help="Directory of videos to choose from on the page."),
     ],
     prompt: Annotated[
         str, typer.Option("--prompt", "-p", help="Prompt sent with every window of frames.")
@@ -88,6 +90,13 @@ def run(
     temperature: Annotated[
         float, typer.Option("--temperature", help="Sampling temperature; 0 is greedy.")
     ] = 0.0,
+    allow_upload: Annotated[
+        bool,
+        typer.Option("--upload/--no-upload", help="Let the page add videos to --input."),
+    ] = True,
+    max_upload_mb: Annotated[
+        float, typer.Option("--max-upload-mb", help="Size limit for one uploaded video.")
+    ] = 1024.0,
     highlight_regex: Annotated[
         str, typer.Option("--highlight-regex", help="Responses matching this are highlighted.")
     ] = DEFAULT_HIGHLIGHT_REGEX,
@@ -104,7 +113,7 @@ def run(
         float, typer.Option("--mock-latency", help="mock backend: fake seconds per pass.")
     ] = 0.2,
 ) -> None:
-    """Serve the demo page for one video + prompt + model."""
+    """Serve the demo page for a directory of videos + prompt + model."""
     logging.basicConfig(
         level=log_level.upper(),
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
@@ -131,6 +140,8 @@ def run(
             infer_timeout=infer_timeout,
             max_tokens=max_tokens,
             temperature=temperature,
+            allow_upload=allow_upload,
+            max_upload_mb=max_upload_mb,
             highlight_regex=highlight_regex,
             dump_frames=dump_frames,
             log_level=log_level,
@@ -142,7 +153,13 @@ def run(
         raise typer.Exit(code=2) from exc
 
     url = f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}"
-    typer.secho(f"\n  video   {config.input}", bold=True)
+    found = len(VideoLibrary(config.input, max_upload_bytes=config.max_upload_bytes).entries())
+    typer.secho(f"\n  videos  {config.input}", bold=True)
+    typer.echo(
+        f"          {found} found"
+        + ("" if config.allow_upload else "; uploads disabled")
+        + (" — upload one from the page" if not found and config.allow_upload else "")
+    )
     typer.echo(f"  model   {config.model}  (backend: {config.backend.value})")
     typer.echo(
         f"  passes  every {config.pass_gap:g}s, {config.num_frames} frames "

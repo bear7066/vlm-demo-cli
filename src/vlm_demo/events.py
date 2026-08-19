@@ -26,12 +26,35 @@ class RunState(StrEnum):
 
 
 class VideoInfo(BaseModel):
+    """The video currently selected for analysis, once it has been probed."""
+
     filename: str
+    url: str
+    """Where the page should point its ``<video>``; carries a cache-busting stamp."""
     duration: float
     fps: float
     width: int
     height: int
     frame_count: int
+
+
+class LibraryVideo(BaseModel):
+    """One entry of the ``--input`` directory, offered to the user as a choice."""
+
+    name: str
+    size_bytes: int
+    modified: float
+
+
+class LibraryEvent(BaseModel):
+    """The contents of the ``--input`` directory; re-sent whenever they change."""
+
+    type: Literal["library"] = "library"
+    directory: str
+    videos: list[LibraryVideo] = Field(default_factory=list)
+    selected: str | None = None
+    uploads_enabled: bool = True
+    max_upload_mb: float = 0.0
 
 
 class SessionEvent(BaseModel):
@@ -47,7 +70,8 @@ class SessionEvent(BaseModel):
     pace: str
     highlight_regex: str
     total_passes: int
-    video: VideoInfo
+    video: VideoInfo | None = None
+    """``None`` until a video is selected — the directory may still be empty."""
 
 
 class StatusEvent(BaseModel):
@@ -94,6 +118,7 @@ class ErrorEvent(BaseModel):
 
 Event = Annotated[
     SessionEvent
+    | LibraryEvent
     | StatusEvent
     | PassStartedEvent
     | PassResultEvent

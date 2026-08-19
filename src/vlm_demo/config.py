@@ -38,6 +38,7 @@ class RunConfig:
     """Everything one `vlm-demo` run needs, already validated."""
 
     input: Path
+    """Directory of videos to choose from; the page picks which one to analyse."""
     prompt: str
     model: str
 
@@ -62,6 +63,9 @@ class RunConfig:
     max_tokens: int = 128
     temperature: float = 0.0
 
+    allow_upload: bool = True
+    max_upload_mb: float = 1024.0
+
     highlight_regex: str = DEFAULT_HIGHLIGHT_REGEX
     dump_frames: Path | None = None
     log_level: str = "info"
@@ -71,9 +75,11 @@ class RunConfig:
 
     def __post_init__(self) -> None:
         if not self.input.exists():
-            raise ConfigError(f"input video not found: {self.input}")
-        if not self.input.is_file():
-            raise ConfigError(f"input is not a file: {self.input}")
+            raise ConfigError(f"input directory not found: {self.input}")
+        if not self.input.is_dir():
+            raise ConfigError(
+                f"--input must be a directory of videos, not a file: {self.input}"
+            )
         if not self.prompt.strip():
             raise ConfigError("--prompt must not be empty")
         if not self.model.strip():
@@ -94,6 +100,8 @@ class RunConfig:
             raise ConfigError("--infer-timeout must be > 0")
         if self.max_tokens < 1:
             raise ConfigError("--max-tokens must be >= 1")
+        if self.max_upload_mb <= 0:
+            raise ConfigError("--max-upload-mb must be > 0")
         if not 1 <= self.port <= 65535:
             raise ConfigError("--port must be between 1 and 65535")
         if self.backend is BackendKind.OPENAI_COMPAT and not self.base_url:
@@ -102,6 +110,10 @@ class RunConfig:
             re.compile(self.highlight_regex)
         except re.error as exc:
             raise ConfigError(f"--highlight-regex is not a valid regex: {exc}") from exc
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return int(self.max_upload_mb * 1_000_000)
 
     def total_passes(self, duration: float) -> int:
         """How many inference passes a video of ``duration`` seconds yields.

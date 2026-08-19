@@ -9,12 +9,18 @@
   <body>
     <header class="topbar">
       <h1>vlm&#8209;demo</h1>
+      <span class="now mono" id="filename"></span>
       <div class="pill" id="status" data-state="loading">connecting…</div>
     </header>
 
     <main>
       <section class="stage">
-        <video id="video" src="/api/video" preload="auto" playsinline controls></video>
+        <div class="frame">
+          <video id="video" preload="auto" playsinline controls></video>
+          <p class="novideo" id="novideo" hidden>
+            No video selected — pick one from the list, or add your own.
+          </p>
+        </div>
         <div class="timeline" id="timeline" title="one mark per inference pass"></div>
         <div class="controls">
           <button id="start" disabled>Start</button>
@@ -24,6 +30,23 @@
       </section>
 
       <section class="side">
+        <div class="card library" id="library">
+          <div class="field">
+            <span class="label">videos</span>
+            <p class="dir mono" id="libdir">…</p>
+            <ul class="videos" id="videos"></ul>
+            <p class="empty" id="libempty" hidden>This folder has no videos yet.</p>
+          </div>
+          <div class="field uploader" id="uploader" hidden>
+            <input id="file" type="file" accept="video/*" multiple hidden />
+            <div class="uploader-row">
+              <button class="ghost" id="pick">Add video…</button>
+              <span class="hint" id="uploadHint">or drop files here</span>
+            </div>
+            <div class="progress" id="progress" hidden><i id="progressBar"></i></div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="field">
             <span class="label">prompt</span>

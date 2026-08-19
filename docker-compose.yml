@@ -1,5 +1,7 @@
 # vLLM backend + the demo app on a private network; only the app's port 3000 is published.
-# Override with env vars: MODEL, VIDEO, PROMPT, VLLM_IMAGE, HF_TOKEN.
+# Override with env vars: MODEL, VIDS, PROMPT, VLLM_IMAGE, HF_TOKEN.
+# The app serves the whole ./vids folder; the page picks which clip to analyse and can
+# upload more into it — hence the mount is writable.
 
 x-model: &model ${MODEL:-THChou1220/gemma-4-e2b-kinetics54K-enhanced-fall_FFT}
 
@@ -34,7 +36,7 @@ services:
     build: .
     command:
       - -i
-      - /vids/${VIDEO:-fall02.mp4}
+      - /vids
       - -p
       - ${PROMPT:-Describe the main action briefly in 2~6 words.}
       - -m
@@ -55,7 +57,7 @@ services:
       - 0.0.0.0
       - --no-open
     volumes:
-      - ./vids:/vids:ro
+      - ${VIDS:-./vids}:/vids
     ports:
       - "3000:3000"
     depends_on: [vllm]  # the app's vllm backend waits + warms up before the first pass

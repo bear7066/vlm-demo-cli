@@ -16,6 +16,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -38,7 +42,17 @@ body {
   margin: 0;
 }
 
+.now {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45vw;
+}
+
 .pill {
+  margin-left: auto;
   font-size: 12px;
   padding: 3px 10px;
   border-radius: 999px;
@@ -71,11 +85,31 @@ main {
   }
 }
 
+.frame {
+  position: relative;
+  min-height: 200px;
+  background: #000;
+  border-radius: 10px 10px 0 0;
+  overflow: hidden;
+}
+
 video {
   width: 100%;
   display: block;
-  border-radius: 10px 10px 0 0;
   background: #000;
+}
+
+.novideo {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 24px;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .timeline {
@@ -126,6 +160,20 @@ button:disabled {
   background: var(--panel-2);
   color: var(--muted);
   cursor: not-allowed;
+}
+
+button.ghost {
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: var(--border);
+  font-weight: 500;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+button.ghost:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .counter,
@@ -254,4 +302,110 @@ button:disabled {
   25% { content: "."; }
   50% { content: ".."; }
   75% { content: "..."; }
+}
+
+
+/* ------------------------------------------------------------------ library */
+
+.library.dropping {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.dir {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videos {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 28vh;
+  overflow-y: auto;
+}
+
+button.vid {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 400;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.vid:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+button.vid.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+button.vid:disabled {
+  background: var(--panel-2);
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.vname {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vsize {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.uploader-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.hint.bad {
+  color: var(--hit);
+}
+
+.progress {
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.15s linear;
 }

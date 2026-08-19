@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -44,10 +45,22 @@ def clip(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture
-def make_config(clip: Path):
+def library(clip: Path, tmp_path: Path) -> Path:
+    """A per-test ``--input`` directory holding one copy of the clip.
+
+    Tests that upload or select must not share a directory, hence the copy.
+    """
+    root = tmp_path / "vids"
+    root.mkdir()
+    shutil.copy(clip, root / clip.name)
+    return root
+
+
+@pytest.fixture
+def make_config(library: Path):
     def _make(**overrides: Any) -> RunConfig:
         defaults: dict[str, Any] = {
-            "input": clip,
+            "input": library,
             "prompt": "detect if any accident happens",
             "model": "mock",
             "backend": BackendKind.MOCK,

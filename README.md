@@ -1,16 +1,19 @@
 # vlm-demo-cli
 
-Stream a video file to a vision-language model and watch its responses appear, round by round,
-on a simple web page while the video plays.
+Stream a video to a vision-language model and watch its responses appear, round by round, on a
+simple web page while the video plays.
 
 ```bash
 uv run vlm-demo \
-  --input ./video.mp4 \
+  --input ./vids \
   --prompt "detect if any accident happens, if yes, say 'accident detected: <desc>', otherwise just say 'nothing happened'" \
   --model google/gemma-4-e4b-it
 ```
 
-This opens <http://127.0.0.1:3000>. The page shows the video, the prompt and the backend model.
+This opens <http://127.0.0.1:3000>. `--input` is a **folder of videos**: the page lists what is
+in it, you pick one (and can upload more — see [Choosing a video](#choosing-a-video)), and it
+shows that video alongside the prompt and the backend model.
+
 Nothing runs until you press **Start**. From then on the video plays and, in lockstep with
 playback, the backend extracts a sliding window of frames and sends them to the model. Each
 inference pass appends one response to the feed on the right.
@@ -57,16 +60,16 @@ The backend is chosen automatically from your flags, or forced with `--backend`.
 
 ```bash
 # 1. no model needed — proves the timeline, the websocket and the UI
-uv run vlm-demo -i ./video.mp4 -p "detect if any accident happens…" \
+uv run vlm-demo -i ./vids -p "detect if any accident happens…" \
   -m mock --mock-detect-at 6 --mock-latency 0.3
 
 # 2. against a served model
-uv run vlm-demo -i ./video.mp4 -p "…" \
+uv run vlm-demo -i ./vids -p "…" \
   -m Qwen/Qwen2.5-VL-7B-Instruct --base-url http://localhost:8000/v1
 
 # 3. locally, in-process
 uv sync --extra gpu
-uv run vlm-demo -i ./video.mp4 -p "…" -m google/gemma-4-e4b-it --backend transformers
+uv run vlm-demo -i ./vids -p "…" -m google/gemma-4-e4b-it --backend transformers
 ```
 
 ## vLLM in Docker
@@ -74,7 +77,7 @@ uv run vlm-demo -i ./video.mp4 -p "…" -m google/gemma-4-e4b-it --backend trans
 ```bash
 # just the model server (waits for readiness, sends a warmup request):
 ./scripts/run-vllm.sh [model]
-uv run vlm-demo -i ./vids/fall02.mp4 -p "…" --backend vllm \
+uv run vlm-demo -i ./vids -p "…" --backend vllm \
   -m THChou1220/gemma-4-e2b-kinetics54K-enhanced-fall_FFT
 
 # the whole stack: vLLM + this app on a private compose network, UI on port 3000
@@ -88,11 +91,33 @@ those tensors back from `google/gemma-4-E2B-it` into `models/gemma-4-e2b-fall-me
 `run-stack.sh` runs it automatically, and both scripts serve the merged copy under the
 original model name so `-m` stays the same.
 
-Both are tuned via env vars — `MODEL`, `VIDEO` (a file in `./vids`), `PROMPT`, `VLLM_IMAGE`
-(default: `vllm/vllm-openai:gemma4-cu130`, the local DGX Spark build), `HF_TOKEN`. The `vllm`
+Both are tuned via env vars — `MODEL`, `VIDS` (the video folder, default `./vids`), `PROMPT`,
+`VLLM_IMAGE` (default: `vllm/vllm-openai:gemma4-cu130`, the local DGX Spark build), `HF_TOKEN`.
+Which clip runs is no longer a launch flag: the page picks it. `./vids` is mounted read-write so
+uploads from the page land on the host — files the container creates are owned by root, so
+`sudo chown` them if that gets in your way, or pass `--no-upload` in the compose command. The `vllm`
 backend polls `/v1/models` until the server is up (weights can take minutes to load) and then
 sends one dummy request with `--num-frames` grey frames at `--frame-max-size`, so processor
 init and CUDA graph capture are paid before your first real window.
+
+## Choosing a video
+
+`--input` is a directory, and the page's **videos** card lists every video directly inside it
+(`.mp4 .m4v .mov .mkv .webm .avi .mpg .mpeg .ogv .wmv`; sub-folders are ignored). The first one
+is selected at startup, and clicking another switches to it: the pass loop stops, the feed and
+the timeline are cleared, and the new clip is loaded with the same prompt and model. Every open
+page follows along, since the switch is broadcast over the websocket.
+
+**Add your own** with *Add video…*, or by dropping files onto the card — several at once is
+fine, and they upload one by one with a progress bar. Uploads are stored in the same `--input`
+directory, so they survive a restart and are just another entry in the list. Names are reduced
+to a plain file name (no directories, no surprises), and an upload never overwrites an existing
+video — `clip.mp4` arriving twice becomes `clip.mp4` and `clip-1.mp4`. Only the extensions above
+are accepted, and `--max-upload-mb` (default 1024) caps a single file.
+
+If the folder starts out empty, the page opens with the uploader and nothing selected; the first
+video you add becomes the selection. Pass `--no-upload` to make the directory read-only from the
+page — the list still works, only adding is refused.
 
 ## Pacing
 
@@ -112,7 +137,7 @@ this class of hardware raise `--pass-gap` (2–3s is comfortable) or switch to `
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--input, -i` | — | Video file to play and analyse. |
+| `--input, -i` | — | Directory of videos; the page picks which one to analyse. |
 | `--prompt, -p` | — | Prompt sent with every window. |
 | `--model, -m` | — | Model id. |
 | `--backend` | auto | `mock`, `openai-compat` or `transformers`. |
@@ -128,6 +153,8 @@ this class of hardware raise `--pass-gap` (2–3s is comfortable) or switch to `
 | `--jpeg-quality` | `80` | JPEG quality for encoded frames. |
 | `--infer-timeout` | `30.0` | Per-pass timeout, in seconds. |
 | `--max-tokens` / `--temperature` | `128` / `0.0` | Generation settings. |
+| `--upload / --no-upload` | `--upload` | Let the page add videos to `--input`. |
+| `--max-upload-mb` | `1024` | Size limit for one uploaded video. |
 | `--highlight-regex` | `(?i)detect` | Responses matching this are highlighted. |
 | `--dump-frames` | — | Directory to write every sent frame to, for debugging. |
 | `--mock-detect-at` / `--mock-latency` | `none` / `0.2` | `mock` backend behaviour. |
@@ -147,12 +174,17 @@ several times a second; the scheduler extrapolates between heartbeats, so pausin
 inference and seeking moves the analysis with it. Pass `k` fires at video time `k * pass_gap` and
 covers `[k * pass_gap - window_sec, k * pass_gap]`.
 
+Prompt, model and pacing are fixed for the process; the *video* is not. Picking one
+(`POST /api/select`) or uploading one (`POST /api/videos?name=…`, the raw file as the body)
+re-points the session at a new `VideoSource` and announces it to every page.
+
 Layout:
 
 ```
 src/vlm_demo/
   cli.py          typer entrypoint
   config.py       RunConfig + validation
+  library.py      the --input directory: listing, name safety, uploads
   events.py       websocket wire contract (pydantic)
   video.py        decoding and window sampling
   scheduler.py    media clock + pacing policies

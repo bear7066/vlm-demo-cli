@@ -1,8 +1,9 @@
-"""FastAPI app: serves the page, streams the video, and carries the event websocket."""
+"""FastAPI app: serves the page, the video library, and the event websocket."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import mimetypes
 import re
@@ -11,13 +12,22 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from vlm_demo.backends.registry import create_backend
 from vlm_demo.config import RunConfig
-from vlm_demo.events import ErrorEvent, RunState, dump
+from vlm_demo.events import ErrorEvent, LibraryEvent, LibraryVideo, RunState, dump
+from vlm_demo.library import LibraryError, UploadTooLarge, VideoLibrary
 from vlm_demo.scheduler import MediaClock, Scheduler
 from vlm_demo.session import Session
 from vlm_demo.video import VideoSource
@@ -29,27 +39,127 @@ CHUNK_SIZE = 512 * 1024
 RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
 
 
+class SelectRequest(BaseModel):
+    """``POST /api/select`` — which video in the library to analyse next."""
+
+    name: str
+
+
 class AppState:
-    """Everything the routes need, hung off ``app.state.run``."""
+    """Everything the routes need, hung off ``app.state.run``.
+
+    One process serves one prompt/model, but the *video* is not fixed: it is whichever file
+    of the ``--input`` directory the page currently has selected, and switching it tears the
+    old run down and starts a fresh one (:meth:`select`).
+    """
 
     def __init__(self, config: RunConfig) -> None:
         self.config = config
-        self.video = VideoSource(
+        self.library = VideoLibrary(
             config.input,
-            max_size=config.frame_max_size,
-            jpeg_quality=config.jpeg_quality,
-            dump_dir=config.dump_frames,
+            max_upload_bytes=config.max_upload_bytes,
+            allow_upload=config.allow_upload,
         )
         self.backend = create_backend(config)
-        self.session: Session | None = None
+        self.session = Session(config, self.backend.name)
+        self.video: VideoSource | None = None
+        self.selected: str | None = None
         self.clock: MediaClock | None = None
         self.scheduler: Scheduler | None = None
         self.scheduler_task: asyncio.Task[None] | None = None
+        self.backend_state = RunState.LOADING
+        self.backend_detail = f"preparing {self.backend.name} backend"
+        self._select_lock = asyncio.Lock()
 
-    def require_session(self) -> Session:
-        if self.session is None:  # pragma: no cover - lifespan always sets it
-            raise HTTPException(status_code=503, detail="session not ready")
-        return self.session
+    # ------------------------------------------------------------------ run state
+
+    def run_state(self) -> tuple[RunState, str]:
+        """The state a freshly (re)targeted session should sit in, and why.
+
+        Backend readiness and video selection are independent; the page can only start when
+        both are settled.
+        """
+        if self.backend_state in (RunState.ERROR, RunState.LOADING):
+            return self.backend_state, self.backend_detail
+        if self.video is None:
+            return RunState.READY, "pick a video to analyse"
+        return RunState.READY, "press Start to begin"
+
+    def library_event(self) -> LibraryEvent:
+        return LibraryEvent(
+            directory=str(self.library.root),
+            videos=[
+                LibraryVideo(name=e.name, size_bytes=e.size_bytes, modified=e.modified)
+                for e in self.library.entries()
+            ],
+            selected=self.selected,
+            uploads_enabled=self.config.allow_upload,
+            max_upload_mb=self.config.max_upload_mb,
+        )
+
+    async def publish_library(self) -> None:
+        """Tell every open page what is in the directory now.
+
+        Not recorded in the history: connections are sent the current listing anyway, and a
+        replayed stale one would fight with it.
+        """
+        await self.session.publish(self.library_event(), record=False)
+
+    # ------------------------------------------------------------------ selection
+
+    async def select(self, name: str | None) -> None:
+        """Make ``name`` the video under analysis (``None`` clears the selection).
+
+        Raises :class:`LibraryError` if the name is not a video in the directory, and
+        :class:`~vlm_demo.video.VideoError` if it cannot be decoded — in both cases the
+        current selection is left untouched.
+        """
+        async with self._select_lock:
+            source: VideoSource | None = None
+            meta = None
+            if name is not None:
+                path = self.library.resolve(name)
+                source = VideoSource(
+                    path,
+                    max_size=self.config.frame_max_size,
+                    jpeg_quality=self.config.jpeg_quality,
+                    dump_dir=self.config.dump_frames,
+                )
+                meta = await asyncio.to_thread(source.open)
+
+            await self.stop_run()
+            previous, self.video, self.selected = self.video, source, name
+            self.clock = MediaClock(meta.duration) if meta is not None else None
+            if previous is not None:
+                await asyncio.to_thread(previous.close)
+
+            if meta is not None:
+                log.info(
+                    "%s: %.2fs, %.2f fps, %dx%d → %d passes",
+                    meta.path.name,
+                    meta.duration,
+                    meta.fps,
+                    meta.width,
+                    meta.height,
+                    self.config.total_passes(meta.duration),
+                )
+            await self.session.retarget(meta, *self.run_state())
+            await self.publish_library()
+
+    async def stop_run(self) -> None:
+        """Halt the pass loop, if any, and wait for it to let go of the video."""
+        if self.scheduler is not None:
+            self.scheduler.stop()
+        task, self.scheduler_task, self.scheduler = self.scheduler_task, None, None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    def require_video(self) -> VideoSource:
+        if self.video is None:
+            raise HTTPException(status_code=409, detail="no video selected")
+        return self.video
 
 
 def create_app(config: RunConfig) -> FastAPI:
@@ -57,29 +167,26 @@ def create_app(config: RunConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        meta = await asyncio.to_thread(state.video.open)
-        state.session = Session(config, meta, state.backend.name)
-        state.clock = MediaClock(meta.duration)
-        log.info(
-            "%s: %.2fs, %.2f fps, %dx%d → %d passes",
-            meta.path.name,
-            meta.duration,
-            meta.fps,
-            meta.width,
-            meta.height,
-            config.total_passes(meta.duration),
-        )
+        # Start on the first video in the directory, so the common case (a folder of clips)
+        # behaves exactly like the old single-file flag. An empty folder is fine: the page
+        # shows the uploader instead.
+        default = state.library.default_name()
+        if default is not None:
+            try:
+                await state.select(default)
+            except Exception:
+                log.exception("could not open %s; starting with no video selected", default)
+        else:
+            log.info("%s holds no videos yet — upload one from the page", state.library.root)
         prepare = asyncio.create_task(_prepare_backend(state))
         try:
             yield
         finally:
             prepare.cancel()
-            if state.scheduler is not None:
-                state.scheduler.stop()
-            if state.scheduler_task is not None:
-                state.scheduler_task.cancel()
+            await state.stop_run()
             await state.backend.aclose()
-            await asyncio.to_thread(state.video.close)
+            if state.video is not None:
+                await asyncio.to_thread(state.video.close)
 
     app = FastAPI(title="vlm-demo", lifespan=lifespan)
     app.state.run = state
@@ -91,16 +198,80 @@ def create_app(config: RunConfig) -> FastAPI:
 
     @app.get("/api/config")
     async def api_config() -> dict[str, Any]:
-        return dump(state.require_session().describe())
+        return dump(state.session.describe())
 
     @app.get("/api/events")
     async def api_events() -> dict[str, Any]:
-        session = state.require_session()
-        return {"state": session.state.value, "events": session.history()}
+        return {"state": state.session.state.value, "events": state.session.history()}
+
+    @app.get("/api/library")
+    async def api_library() -> dict[str, Any]:
+        return dump(state.library_event())
+
+    @app.post("/api/select")
+    async def api_select(body: SelectRequest) -> dict[str, Any]:
+        try:
+            await state.select(body.name)
+        except LibraryError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"cannot open {body.name}: {exc}") from exc
+        return dump(state.session.describe())
+
+    @app.post("/api/videos", status_code=201)
+    async def api_upload(
+        request: Request,
+        name: str = Query(..., description="File name the upload should be stored under."),
+    ) -> dict[str, Any]:
+        """Store one uploaded video in the ``--input`` directory.
+
+        The body is the raw file, streamed straight to disk — one request per file, which
+        keeps memory flat and gives the page a progress bar per upload.
+        """
+        if not config.allow_upload:
+            raise HTTPException(status_code=403, detail="uploads are disabled (--no-upload)")
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > config.max_upload_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"upload exceeds the {config.max_upload_mb:g} MB limit",
+            )
+        try:
+            entry = await state.library.save(name, request.stream())
+        except UploadTooLarge as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except LibraryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            log.exception("could not store upload %r", name)
+            raise HTTPException(status_code=500, detail=f"could not store upload: {exc}") from exc
+
+        # Nothing was playable before, so the upload becomes the selection; otherwise leave
+        # whatever the user is watching alone.
+        if state.selected is None:
+            with contextlib.suppress(Exception):
+                await state.select(entry.name)
+        await state.publish_library()
+        return {
+            "video": dump(
+                LibraryVideo(
+                    name=entry.name, size_bytes=entry.size_bytes, modified=entry.modified
+                )
+            ),
+            "selected": state.selected,
+        }
 
     @app.get("/api/video")
     async def api_video(request: Request) -> Any:
-        return video_response(config.input, request.headers.get("range"))
+        return video_response(state.require_video().path, request.headers.get("range"))
+
+    @app.get("/api/video/{name}")
+    async def api_video_named(name: str, request: Request) -> Any:
+        try:
+            path = state.library.resolve(name)
+        except LibraryError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return video_response(path, request.headers.get("range"))
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket) -> None:
@@ -113,20 +284,22 @@ def create_app(config: RunConfig) -> FastAPI:
 
 
 async def _prepare_backend(state: AppState) -> None:
-    session = state.require_session()
-    await session.set_state(RunState.LOADING, f"preparing {state.backend.name} backend")
+    session = state.session
+    await session.set_state(*state.run_state())
     try:
         await state.backend.prepare()
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         log.exception("backend preparation failed")
+        state.backend_state, state.backend_detail = RunState.ERROR, str(exc)
         await session.publish(ErrorEvent(message=f"backend failed to load: {exc}"))
-        await session.set_state(RunState.ERROR, str(exc))
+        await session.set_state(*state.run_state())
         return
+    state.backend_state, state.backend_detail = RunState.READY, ""
     for note in state.backend.notes:
         await session.publish(ErrorEvent(message=note))
-    await session.set_state(RunState.READY, "press Start to begin")
+    await session.set_state(*state.run_state())
 
 
 # ---------------------------------------------------------------------- video streaming
@@ -155,7 +328,7 @@ def parse_range(header: str | None, size: int) -> tuple[int, int] | None:
 
 
 def video_response(path: Path, range_header: str | None) -> Any:
-    """Serve the input video, honouring ``Range`` so the player can seek."""
+    """Serve one video from the library, honouring ``Range`` so the player can seek."""
     size = path.stat().st_size
     media_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
     span = parse_range(range_header, size)
@@ -195,10 +368,11 @@ def video_response(path: Path, range_header: str | None) -> Any:
 
 async def _websocket_endpoint(websocket: WebSocket, state: AppState) -> None:
     await websocket.accept()
-    session = state.require_session()
+    session = state.session
     queue = session.subscribe()
     try:
         await websocket.send_json(dump(session.describe()))
+        await websocket.send_json(dump(state.library_event()))
         for event in session.history():
             await websocket.send_json(event)
 
@@ -233,9 +407,9 @@ async def _receive_loop(websocket: WebSocket, state: AppState) -> None:
 
 async def handle_client_message(message: dict[str, Any], state: AppState) -> None:
     """Apply one client → server control message. Unknown types are ignored."""
-    session = state.require_session()
+    session = state.session
     clock = state.clock
-    if clock is None:  # pragma: no cover - lifespan always sets it
+    if clock is None:  # no video selected: there is no timeline to drive
         return
     kind = message.get("type")
     t = float(message.get("t", clock.now()) or 0.0)
@@ -271,7 +445,7 @@ async def _ensure_scheduler(state: AppState) -> None:
     """Start a pass loop if one is not already running (Start can be pressed again)."""
     if state.scheduler_task is not None and not state.scheduler_task.done():
         return
-    session = state.require_session()
+    session = state.session
     if session.state is RunState.ERROR:
         await session.publish(ErrorEvent(message="backend is unavailable; see the server log"))
         return
@@ -280,7 +454,9 @@ async def _ensure_scheduler(state: AppState) -> None:
             ErrorEvent(message="the backend is still loading — press Start again in a moment")
         )
         return
-    assert state.clock is not None
+    if state.video is None or state.clock is None:
+        await session.publish(ErrorEvent(message="pick a video from the list first"))
+        return
     scheduler = Scheduler(state.config, session, state.video, state.backend, state.clock)
     state.scheduler = scheduler
     state.scheduler_task = asyncio.create_task(scheduler.run())

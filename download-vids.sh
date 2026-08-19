@@ -27,6 +27,8 @@ names=(
     "general06.mp4" "general07.mp4" "general08.mp4" "general09.mp4" "general10.mp4"
 )
 
+mkdir -p vids
+
 for i in "${!vids[@]}"; do
     vid="${vids[$i]}"
     name="${names[$i]}"
