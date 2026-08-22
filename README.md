@@ -95,7 +95,8 @@ Both are tuned via env vars — `MODEL`, `VIDS` (the video folder, default `./vi
 `VLLM_IMAGE` (default: `vllm/vllm-openai:gemma4-cu130`, the local DGX Spark build), `HF_TOKEN`.
 Which clip runs is no longer a launch flag: the page picks it. `./vids` is mounted read-write so
 uploads from the page land on the host — files the container creates are owned by root, so
-`sudo chown` them if that gets in your way, or pass `--no-upload` in the compose command. The `vllm`
+`sudo chown` them if that gets in your way, or pass `--no-upload` / `--no-delete` in the
+compose command. The `vllm`
 backend polls `/v1/models` until the server is up (weights can take minutes to load) and then
 sends one dummy request with `--num-frames` grey frames at `--frame-max-size`, so processor
 init and CUDA graph capture are paid before your first real window.
@@ -115,9 +116,15 @@ to a plain file name (no directories, no surprises), and an upload never overwri
 video — `clip.mp4` arriving twice becomes `clip.mp4` and `clip-1.mp4`. Only the extensions above
 are accepted, and `--max-upload-mb` (default 1024) caps a single file.
 
+**Delete one** with the `×` beside its name. This removes the file from `--input` for good, so
+the page asks first. Deleting the clip you are watching stops the run and moves the selection to
+the next video in the list (or to nothing, if that was the last one); deleting any other clip just
+drops it from the list and leaves playback alone. Every open page follows along, as with a switch.
+
 If the folder starts out empty, the page opens with the uploader and nothing selected; the first
 video you add becomes the selection. Pass `--no-upload` to make the directory read-only from the
-page — the list still works, only adding is refused.
+page — the list still works, only adding is refused — and `--no-delete` to hide the `×` and refuse
+removals.
 
 ## Pacing
 
@@ -154,6 +161,7 @@ this class of hardware raise `--pass-gap` (2–3s is comfortable) or switch to `
 | `--infer-timeout` | `30.0` | Per-pass timeout, in seconds. |
 | `--max-tokens` / `--temperature` | `128` / `0.0` | Generation settings. |
 | `--upload / --no-upload` | `--upload` | Let the page add videos to `--input`. |
+| `--delete / --no-delete` | `--delete` | Let the page remove videos from `--input`. |
 | `--max-upload-mb` | `1024` | Size limit for one uploaded video. |
 | `--highlight-regex` | `(?i)detect` | Responses matching this are highlighted. |
 | `--dump-frames` | — | Directory to write every sent frame to, for debugging. |
@@ -176,7 +184,9 @@ covers `[k * pass_gap - window_sec, k * pass_gap]`.
 
 Prompt, model and pacing are fixed for the process; the *video* is not. Picking one
 (`POST /api/select`) or uploading one (`POST /api/videos?name=…`, the raw file as the body)
-re-points the session at a new `VideoSource` and announces it to every page.
+re-points the session at a new `VideoSource` and announces it to every page. Deleting one
+(`DELETE /api/videos/{name}`) unlinks the file, and re-points the session if it was the video
+being analysed.
 
 Layout:
 
@@ -184,7 +194,7 @@ Layout:
 src/vlm_demo/
   cli.py          typer entrypoint
   config.py       RunConfig + validation
-  library.py      the --input directory: listing, name safety, uploads
+  library.py      the --input directory: listing, name safety, uploads, deletes
   events.py       websocket wire contract (pydantic)
   video.py        decoding and window sampling
   scheduler.py    media clock + pacing policies

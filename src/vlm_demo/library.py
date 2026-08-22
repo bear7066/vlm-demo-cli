@@ -1,9 +1,10 @@
-"""The video directory behind ``--input``: listing, safe name resolution, uploads.
+"""The video directory behind ``--input``: listing, safe name resolution, uploads, deletes.
 
 ``--input`` points at a folder, not a file. The page lists what is in it, the user picks one
-to analyse, and may add more by uploading. Everything a browser hands us — a file name, the
-name to switch to — is untrusted, so it goes through :func:`sanitize_name` /
-:meth:`VideoLibrary.resolve` before it ever touches the filesystem.
+to analyse, and may add more by uploading or drop ones it no longer wants. Everything a browser
+hands us — a file name, the name to switch to, the name to remove — is untrusted, so it goes
+through :func:`sanitize_name` / :meth:`VideoLibrary.resolve` before it ever touches the
+filesystem.
 """
 
 from __future__ import annotations
@@ -81,10 +82,18 @@ class VideoEntry:
 class VideoLibrary:
     """The directory ``--input`` points at, plus the rules for reading and writing in it."""
 
-    def __init__(self, root: Path, *, max_upload_bytes: int, allow_upload: bool = True) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        max_upload_bytes: int,
+        allow_upload: bool = True,
+        allow_delete: bool = True,
+    ) -> None:
         self.root = Path(root).resolve()
         self.max_upload_bytes = max_upload_bytes
         self.allow_upload = allow_upload
+        self.allow_delete = allow_delete
 
     # ------------------------------------------------------------------ reading
 
@@ -157,3 +166,15 @@ class VideoLibrary:
             raise
         log.info("stored upload %s (%.1f MB)", name, written / 1e6)
         return VideoEntry.of(self.root / name)
+
+    def delete(self, name: str) -> None:
+        """Remove one video from the directory for good.
+
+        Only files :meth:`resolve` accepts can be reached, so this cannot unlink anything
+        outside the library — or anything that is not a video.
+        """
+        if not self.allow_delete:
+            raise LibraryError("deleting is disabled (--no-delete)")
+        path = self.resolve(name)
+        path.unlink()
+        log.info("deleted %s", path.name)

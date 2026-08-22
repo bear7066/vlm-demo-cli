@@ -59,6 +59,7 @@ class AppState:
             config.input,
             max_upload_bytes=config.max_upload_bytes,
             allow_upload=config.allow_upload,
+            allow_delete=config.allow_delete,
         )
         self.backend = create_backend(config)
         self.session = Session(config, self.backend.name)
@@ -94,6 +95,7 @@ class AppState:
             ],
             selected=self.selected,
             uploads_enabled=self.config.allow_upload,
+            deletes_enabled=self.config.allow_delete,
             max_upload_mb=self.config.max_upload_mb,
         )
 
@@ -145,6 +147,23 @@ class AppState:
                 )
             await self.session.retarget(meta, *self.run_state())
             await self.publish_library()
+
+    async def delete(self, name: str) -> None:
+        """Remove ``name`` from the directory, and move on if it was the one being analysed.
+
+        Deleting the selection drops it first — that stops the run and closes the file — and
+        then falls through to whatever is left, so the page never points at a video that is
+        no longer there.
+        """
+        target = self.library.resolve(name)
+        if self.selected is not None and self.library.resolve(self.selected) == target:
+            await self.select(None)
+            self.library.delete(name)
+            with contextlib.suppress(Exception):
+                await self.select(self.library.default_name())
+        else:
+            self.library.delete(name)
+        await self.publish_library()
 
     async def stop_run(self) -> None:
         """Halt the pass loop, if any, and wait for it to let go of the video."""
@@ -260,6 +279,20 @@ def create_app(config: RunConfig) -> FastAPI:
             ),
             "selected": state.selected,
         }
+
+    @app.delete("/api/videos/{name}")
+    async def api_delete(name: str) -> dict[str, Any]:
+        """Remove one video from the ``--input`` directory. This deletes the file."""
+        if not config.allow_delete:
+            raise HTTPException(status_code=403, detail="deleting is disabled (--no-delete)")
+        try:
+            await state.delete(name)
+        except LibraryError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except OSError as exc:
+            log.exception("could not delete %r", name)
+            raise HTTPException(status_code=500, detail=f"could not delete: {exc}") from exc
+        return {"deleted": name, "selected": state.selected}
 
     @app.get("/api/video")
     async def api_video(request: Request) -> Any:

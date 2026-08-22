@@ -139,6 +139,64 @@ def test_uploads_can_be_switched_off(make_config):
         assert response.status_code == 403
 
 
+# ---------------------------------------------------------------- deletes
+
+
+def test_deleting_an_unselected_video_removes_the_file_only(client, library):
+    shutil.copy(library / "sample.mp4", library / "second.mp4")
+    client.get("/api/library")  # the copy is picked up on the next listing
+    response = client.delete("/api/videos/second.mp4")
+    assert response.status_code == 200
+    assert response.json() == {"deleted": "second.mp4", "selected": "sample.mp4"}
+    assert not (library / "second.mp4").exists()
+    assert [v["name"] for v in client.get("/api/library").json()["videos"]] == ["sample.mp4"]
+    assert client.get("/api/config").json()["video"]["filename"] == "sample.mp4"
+
+
+def test_deleting_the_selected_video_falls_through_to_the_next(client, library):
+    shutil.copy(library / "sample.mp4", library / "zzz.mp4")
+    assert client.get("/api/library").json()["selected"] == "sample.mp4"
+    body = client.delete("/api/videos/sample.mp4").json()
+    assert body["selected"] == "zzz.mp4"
+    assert not (library / "sample.mp4").exists()
+    assert client.get("/api/config").json()["video"]["filename"] == "zzz.mp4"
+
+
+def test_deleting_the_last_video_leaves_nothing_selected(client, library):
+    assert client.delete("/api/videos/sample.mp4").json()["selected"] is None
+    assert list(library.iterdir()) == []
+    library_body = client.get("/api/library").json()
+    assert library_body["videos"] == [] and library_body["selected"] is None
+    assert client.get("/api/config").json()["video"] is None
+    assert client.get("/api/video").status_code == 409
+
+
+def test_deleting_a_missing_video_is_a_404_and_changes_nothing(client, library):
+    assert client.delete("/api/videos/nope.mp4").status_code == 404
+    assert client.delete("/api/videos/..%2F..%2Fetc%2Fpasswd.mp4").status_code == 404
+    assert (library / "sample.mp4").exists()
+    assert client.get("/api/library").json()["selected"] == "sample.mp4"
+
+
+def test_a_delete_is_announced_to_every_page(client, library):
+    shutil.copy(library / "sample.mp4", library / "second.mp4")
+    with client.websocket_connect("/ws") as socket:
+        _drain_until_ready(socket)
+        client.delete("/api/videos/second.mp4")
+        while True:
+            event = socket.receive_json()
+            if event["type"] == "library":
+                break
+    assert [v["name"] for v in event["videos"]] == ["sample.mp4"]
+
+
+def test_deletes_can_be_switched_off(make_config, library):
+    with TestClient(create_app(make_config(allow_delete=False))) as client:
+        assert client.get("/api/library").json()["deletes_enabled"] is False
+        assert client.delete("/api/videos/sample.mp4").status_code == 403
+    assert (library / "sample.mp4").exists()
+
+
 # ---------------------------------------------------------------- video streaming
 
 

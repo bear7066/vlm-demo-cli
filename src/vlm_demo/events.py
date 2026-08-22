@@ -54,6 +54,7 @@ class LibraryEvent(BaseModel):
     videos: list[LibraryVideo] = Field(default_factory=list)
     selected: str | None = None
     uploads_enabled: bool = True
+    deletes_enabled: bool = True
     max_upload_mb: float = 0.0
 
 

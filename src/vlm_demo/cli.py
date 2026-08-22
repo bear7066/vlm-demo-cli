@@ -94,6 +94,10 @@ def run(
         bool,
         typer.Option("--upload/--no-upload", help="Let the page add videos to --input."),
     ] = True,
+    allow_delete: Annotated[
+        bool,
+        typer.Option("--delete/--no-delete", help="Let the page remove videos from --input."),
+    ] = True,
     max_upload_mb: Annotated[
         float, typer.Option("--max-upload-mb", help="Size limit for one uploaded video.")
     ] = 1024.0,
@@ -141,6 +145,7 @@ def run(
             max_tokens=max_tokens,
             temperature=temperature,
             allow_upload=allow_upload,
+            allow_delete=allow_delete,
             max_upload_mb=max_upload_mb,
             highlight_regex=highlight_regex,
             dump_frames=dump_frames,

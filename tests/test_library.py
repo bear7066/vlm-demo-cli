@@ -134,6 +134,43 @@ async def test_save_honours_no_upload(tmp_path: Path):
         await lib.save("clip.mp4", feed(b"x"))
 
 
+# ---------------------------------------------------------------- deletes
+
+
+def test_delete_removes_one_video_and_leaves_the_rest(lib: VideoLibrary):
+    (lib.root / "a.mp4").write_bytes(b"x")
+    (lib.root / "b.mp4").write_bytes(b"y")
+    lib.delete("a.mp4")
+    assert [e.name for e in lib.entries()] == ["b.mp4"]
+    assert not (lib.root / "a.mp4").exists()
+
+
+@pytest.mark.parametrize("raw", ["missing.mp4", "../outside.mp4", "notes.txt"])
+def test_delete_refuses_what_resolve_refuses(lib: VideoLibrary, raw):
+    (lib.root / "notes.txt").write_text("keep me")
+    with pytest.raises(LibraryError):
+        lib.delete(raw)
+    assert (lib.root / "notes.txt").exists()
+
+
+def test_delete_cannot_reach_outside_the_directory(tmp_path: Path):
+    root, outside = tmp_path / "vids", tmp_path / "outside.mp4"
+    root.mkdir()
+    outside.write_bytes(b"precious")
+    lib = VideoLibrary(root, max_upload_bytes=1_000)
+    with pytest.raises(LibraryError):
+        lib.delete("../outside.mp4")
+    assert outside.exists()
+
+
+def test_delete_honours_no_delete(tmp_path: Path):
+    lib = VideoLibrary(tmp_path, max_upload_bytes=1_000, allow_delete=False)
+    (lib.root / "clip.mp4").write_bytes(b"x")
+    with pytest.raises(LibraryError, match="disabled"):
+        lib.delete("clip.mp4")
+    assert (lib.root / "clip.mp4").exists()
+
+
 # ---------------------------------------------------------------- config
 
 

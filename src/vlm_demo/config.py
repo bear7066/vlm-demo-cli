@@ -64,6 +64,7 @@ class RunConfig:
     temperature: float = 0.0
 
     allow_upload: bool = True
+    allow_delete: bool = True
     max_upload_mb: float = 1024.0
 
     highlight_regex: str = DEFAULT_HIGHLIGHT_REGEX

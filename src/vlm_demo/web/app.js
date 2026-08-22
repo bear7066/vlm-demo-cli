@@ -1,7 +1,8 @@
 /* The page is the clock: it plays the video and tells the server where playback is.
    It also owns the library UI — which video of the --input directory is analysed, and
-   uploading new ones into it. Both go over REST; the resulting change comes back to
-   every open page as a `session` / `library` event on the websocket. */
+   uploading new ones into it or deleting ones you are done with. All three go over REST;
+   the resulting change comes back to every open page as a `session` / `library` event on
+   the websocket. */
 
 const CLOCK_INTERVAL_MS = 250;
 
@@ -39,7 +40,7 @@ let backendReady = false;
 let started = false;
 let results = 0;
 let currentSrc = null;
-let busy = false; // a selection or an upload is in flight
+let busy = false; // a selection, an upload or a delete is in flight
 const pending = new Map(); // pass index -> placeholder row awaiting its response
 
 function send(type, extra = {}) {
@@ -145,6 +146,16 @@ function applyLibrary(event) {
       size.textContent = formatSize(video.size_bytes);
       button.append(name, size);
       item.append(button);
+      if (event.deletes_enabled) {
+        const remove = document.createElement("button");
+        remove.className = "vdel";
+        remove.dataset.name = video.name;
+        remove.disabled = busy;
+        remove.textContent = "\u00d7";
+        remove.title = `Delete ${video.name}`;
+        remove.setAttribute("aria-label", `Delete ${video.name}`);
+        item.append(remove);
+      }
       return item;
     }),
   );
@@ -277,7 +288,7 @@ function hint(message, isError = false) {
 
 function setBusy(value) {
   busy = value;
-  el.videos.querySelectorAll("button.vid").forEach((b) => (b.disabled = value));
+  el.videos.querySelectorAll("button").forEach((b) => (b.disabled = value));
   el.pick.disabled = value;
   refreshStartButton();
 }
@@ -311,7 +322,31 @@ async function selectVideo(name) {
   }
 }
 
+async function deleteVideo(name) {
+  if (busy) return;
+  if (!confirm(`Delete ${name}? This removes the file from the videos folder.`)) return;
+  setBusy(true);
+  try {
+    const response = await fetch(`/api/videos/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+    // As with selecting, the server broadcasts the new library (and session, if the video
+    // that went was the one being analysed).
+    if (!response.ok) hint(await detail(response, `could not delete ${name}`), true);
+    else hint(`${name} deleted`);
+  } catch (error) {
+    hint(String(error), true);
+  } finally {
+    setBusy(false);
+  }
+}
+
 el.videos.addEventListener("click", (event) => {
+  const remove = event.target.closest("button.vdel");
+  if (remove) {
+    deleteVideo(remove.dataset.name);
+    return;
+  }
   const button = event.target.closest("button.vid");
   if (button) selectVideo(button.dataset.name);
 });
