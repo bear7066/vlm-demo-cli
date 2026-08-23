@@ -32,10 +32,6 @@ LOOPBACK = {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
 
 @app.command()
 def run(
-    input: Annotated[
-        Path,
-        typer.Option("--input", "-i", help="Directory of videos to choose from on the page."),
-    ],
     prompt: Annotated[
         str, typer.Option("--prompt", "-p", help="Prompt sent with every window of frames.")
     ],
@@ -43,6 +39,10 @@ def run(
         str,
         typer.Option("--model", "-m", help="Model id to start on, e.g. a HuggingFace repo id."),
     ],
+    input: Annotated[
+        Path,
+        typer.Option("--input", "-i", help="Directory of videos to choose from on the page."),
+    ] = Path("./vids"),
     backend: Annotated[
         BackendKind | None,
         typer.Option("--backend", help="Force a backend instead of inferring one."),

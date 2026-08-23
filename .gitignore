@@ -3,5 +3,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 frames_dump/
-*.mp4
+vids/*.mp4
+vids/*.mov
 models/
