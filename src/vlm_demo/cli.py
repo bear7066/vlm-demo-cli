@@ -40,7 +40,8 @@ def run(
         str, typer.Option("--prompt", "-p", help="Prompt sent with every window of frames.")
     ],
     model: Annotated[
-        str, typer.Option("--model", "-m", help="Model id, e.g. a HuggingFace repo id.")
+        str,
+        typer.Option("--model", "-m", help="Model id to start on, e.g. a HuggingFace repo id."),
     ],
     backend: Annotated[
         BackendKind | None,
@@ -101,6 +102,12 @@ def run(
     max_upload_mb: Annotated[
         float, typer.Option("--max-upload-mb", help="Size limit for one uploaded video.")
     ] = 1024.0,
+    lock_model: Annotated[
+        bool,
+        typer.Option(
+            "--lock-model/--no-lock-model", help="Pin --model; the page cannot switch it."
+        ),
+    ] = False,
     highlight_regex: Annotated[
         str, typer.Option("--highlight-regex", help="Responses matching this are highlighted.")
     ] = DEFAULT_HIGHLIGHT_REGEX,
@@ -147,6 +154,7 @@ def run(
             allow_upload=allow_upload,
             allow_delete=allow_delete,
             max_upload_mb=max_upload_mb,
+            lock_model=lock_model,
             highlight_regex=highlight_regex,
             dump_frames=dump_frames,
             log_level=log_level,
@@ -165,7 +173,10 @@ def run(
         + ("" if config.allow_upload else "; uploads disabled")
         + (" — upload one from the page" if not found and config.allow_upload else "")
     )
-    typer.echo(f"  model   {config.model}  (backend: {config.backend.value})")
+    typer.echo(
+        f"  model   {config.model}  (backend: {config.backend.value})"
+        + ("; locked" if config.lock_model else "; switchable from the page")
+    )
     typer.echo(
         f"  passes  every {config.pass_gap:g}s, {config.num_frames} frames "
         f"from the last {config.window_sec:g}s, pace={config.pace.value}"

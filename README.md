@@ -126,6 +126,30 @@ video you add becomes the selection. Pass `--no-upload` to make the directory re
 page — the list still works, only adding is refused — and `--no-delete` to hide the `×` and refuse
 removals.
 
+## Choosing a model
+
+`--model` says which model to *start* on; the box in the side panel switches to another without
+restarting the process. Type any id the backend accepts — a HuggingFace repo id such as
+`THChou1220/gemma-4-e2b-kinetics54K-enhanced-fall_FFT` for the `transformers` backend — and press
+Load (or Enter).
+
+Under `transformers` the box also suggests what is already in your HuggingFace cache
+(`~/.cache/huggingface/hub/models--*`, or wherever `$HF_HUB_CACHE` / `$HF_HOME` point), so
+previously downloaded models are one click away. Anything *not* in that list still loads normally
+— it is a list of suggestions, not a whitelist, and an uncached id is simply downloaded. The other
+backends have no local cache to read, so they offer no suggestions and take a typed id only.
+
+Switching stops the run, frees the old model (VRAM included) and loads the new one; the status
+pill goes back to `loading` and the feed is cleared, because every response in it came from the
+previous model. The video you had selected stays selected. A model that does not exist fails the
+same way a bad `--model` does at startup: the pill turns red and the reason lands in the feed.
+
+The *backend* is settled at launch and does not change — switching only re-points the run at
+another model id.
+
+Pass `--lock-model` for demos where the model must not move: the box becomes read-only and
+`POST /api/model` answers 403.
+
 ## Pacing
 
 Real models are not always faster than the video. `--pace` decides what happens when an
@@ -146,7 +170,7 @@ this class of hardware raise `--pass-gap` (2–3s is comfortable) or switch to `
 | --- | --- | --- |
 | `--input, -i` | — | Directory of videos; the page picks which one to analyse. |
 | `--prompt, -p` | — | Prompt sent with every window. |
-| `--model, -m` | — | Model id. |
+| `--model, -m` | — | Model id to start on; the page can switch to another. |
 | `--backend` | auto | `mock`, `openai-compat` or `transformers`. |
 | `--base-url` / `--api-key` | `$VLM_BASE_URL` / `$VLM_API_KEY` | For `openai-compat`. |
 | `--window-sec` | `2.0` | Length of the frame window, in video seconds. |
@@ -163,6 +187,7 @@ this class of hardware raise `--pass-gap` (2–3s is comfortable) or switch to `
 | `--upload / --no-upload` | `--upload` | Let the page add videos to `--input`. |
 | `--delete / --no-delete` | `--delete` | Let the page remove videos from `--input`. |
 | `--max-upload-mb` | `1024` | Size limit for one uploaded video. |
+| `--lock-model / --no-lock-model` | `--no-lock-model` | Pin `--model`; the page cannot change it. |
 | `--highlight-regex` | `(?i)detect` | Responses matching this are highlighted. |
 | `--dump-frames` | — | Directory to write every sent frame to, for debugging. |
 | `--mock-detect-at` / `--mock-latency` | `none` / `0.2` | `mock` backend behaviour. |
@@ -182,11 +207,12 @@ several times a second; the scheduler extrapolates between heartbeats, so pausin
 inference and seeking moves the analysis with it. Pass `k` fires at video time `k * pass_gap` and
 covers `[k * pass_gap - window_sec, k * pass_gap]`.
 
-Prompt, model and pacing are fixed for the process; the *video* is not. Picking one
-(`POST /api/select`) or uploading one (`POST /api/videos?name=…`, the raw file as the body)
+Prompt and pacing are fixed for the process; the *video* and the *model* are not. Picking a
+video (`POST /api/select`) or uploading one (`POST /api/videos?name=…`, the raw file as the body)
 re-points the session at a new `VideoSource` and announces it to every page. Deleting one
 (`DELETE /api/videos/{name}`) unlinks the file, and re-points the session if it was the video
-being analysed.
+being analysed. `POST /api/model` swaps the backend for one built around another model id, closing
+the old one first; both paths hold the same lock, so they cannot interleave.
 
 Layout:
 

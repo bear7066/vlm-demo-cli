@@ -1,8 +1,8 @@
 /* The page is the clock: it plays the video and tells the server where playback is.
    It also owns the library UI — which video of the --input directory is analysed, and
-   uploading new ones into it or deleting ones you are done with. All three go over REST;
-   the resulting change comes back to every open page as a `session` / `library` event on
-   the websocket. */
+   uploading new ones into it or deleting ones you are done with — and which model runs.
+   All of those go over REST; the resulting change comes back to every open page as a
+   `session` / `library` event on the websocket. */
 
 const CLOCK_INTERVAL_MS = 250;
 
@@ -18,7 +18,10 @@ const el = {
   feed: document.getElementById("feed"),
   empty: document.getElementById("empty"),
   prompt: document.getElementById("prompt"),
-  model: document.getElementById("model"),
+  modelInput: document.getElementById("modelInput"),
+  modelList: document.getElementById("modelList"),
+  modelApply: document.getElementById("modelApply"),
+  modelHint: document.getElementById("modelHint"),
   backend: document.getElementById("backend"),
   sampling: document.getElementById("sampling"),
   library: document.getElementById("library"),
@@ -91,7 +94,7 @@ function applySession(event) {
   const video = event.video;
   session = event;
   el.prompt.textContent = event.prompt;
-  el.model.textContent = event.model;
+  applyModel(event);
   el.backend.textContent = event.backend;
   el.sampling.textContent =
     `${event.num_frames} frames from the last ${event.window_sec}s, ` +
@@ -278,6 +281,74 @@ function handle(event) {
   }
 }
 
+/* ------------------------------------------------------------------ model */
+
+/* The box is authoritative only while the user is typing in it: any session event that
+   arrives (including the one our own switch triggers) writes the server's model back. */
+function applyModel(event) {
+  const locked = event.model_locked;
+  if (document.activeElement !== el.modelInput) el.modelInput.value = event.model;
+  el.modelInput.title = event.model;
+  el.modelList.replaceChildren(
+    ...event.available_models.map((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      return option;
+    }),
+  );
+  el.modelInput.disabled = locked;
+  el.modelApply.hidden = locked;
+  modelHint(locked ? "locked — started with --lock-model" : null);
+  refreshModelControls();
+}
+
+function modelHint(message, isError = false) {
+  el.modelHint.textContent = message ?? "";
+  el.modelHint.classList.toggle("bad", Boolean(message) && isError);
+}
+
+function refreshModelControls() {
+  const locked = Boolean(session && session.model_locked);
+  el.modelInput.disabled = locked || busy;
+  el.modelApply.disabled = locked || busy;
+}
+
+async function setModel(raw) {
+  const name = raw.trim();
+  if (busy) return;
+  if (!name) {
+    modelHint("enter a model id", true);
+    return;
+  }
+  if (session && name === session.model) {
+    // Already running it; tidy away whatever whitespace was typed around the name.
+    el.modelInput.value = session.model;
+    modelHint(null);
+    return;
+  }
+  setBusy(true);
+  el.video.pause();
+  try {
+    const response = await fetch("/api/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    // As with selecting a video, the server broadcasts the new session; nothing to apply here.
+    // The status pill is what reports the load finishing, so a success needs no hint of its own.
+    if (!response.ok) modelHint(await detail(response, `could not load ${name}`), true);
+  } catch (error) {
+    modelHint(String(error), true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+el.modelApply.addEventListener("click", () => setModel(el.modelInput.value));
+el.modelInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") setModel(el.modelInput.value);
+});
+
 /* ------------------------------------------------------------------ library */
 
 function hint(message, isError = false) {
@@ -290,6 +361,7 @@ function setBusy(value) {
   busy = value;
   el.videos.querySelectorAll("button").forEach((b) => (b.disabled = value));
   el.pick.disabled = value;
+  refreshModelControls();
   refreshStartButton();
 }
 

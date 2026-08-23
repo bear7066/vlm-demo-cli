@@ -200,9 +200,37 @@ button.ghost:hover:not(:disabled) {
   border-top: 1px solid var(--border);
 }
 
-.field.row {
+.modelrow {
   display: flex;
-  gap: 24px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.modelrow input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.modelrow input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.modelrow input:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+#modelHint {
+  display: block;
+  margin-top: 6px;
 }
 
 .label {

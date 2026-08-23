@@ -17,6 +17,13 @@ def client(make_config):
 
 
 @pytest.fixture
+def locked_client(make_config):
+    """A run started with --lock-model, where the page may not change the model."""
+    with TestClient(create_app(make_config(lock_model=True))) as test_client:
+        yield test_client
+
+
+@pytest.fixture
 def empty_client(make_config, tmp_path):
     """A run pointed at a directory with nothing in it yet."""
     empty = tmp_path / "empty"
@@ -84,6 +91,57 @@ def test_switching_videos_clears_the_previous_feed(client, library):
     client.post("/api/select", json={"name": "second.mp4"})
     replay = client.get("/api/events").json()["events"]
     assert not [e for e in replay if e["type"] == "pass_result"]
+
+
+# ---------------------------------------------------------------- the model
+
+
+def test_switching_the_model_keeps_the_video_and_clears_the_feed(client):
+    with client.websocket_connect("/ws") as socket:
+        _drain_until_ready(socket)
+        socket.send_json({"type": "start", "t": 0.0, "playing": True})
+        while socket.receive_json()["type"] != "pass_result":
+            pass
+
+    body = client.post("/api/model", json={"name": "mock-two"}).json()
+    assert body["model"] == "mock-two"
+    assert body["video"]["filename"] == "sample.mp4"  # the selection survives the swap
+    assert client.get("/api/config").json()["model"] == "mock-two"
+    # Every response in the history came from the old model, so none may be replayed.
+    replay = client.get("/api/events").json()["events"]
+    assert not [e for e in replay if e["type"] == "pass_result"]
+
+
+def test_switching_to_the_current_model_is_a_no_op(client):
+    assert client.post("/api/model", json={"name": "mock"}).json()["model"] == "mock"
+    assert client.get("/api/config").json()["model"] == "mock"
+
+
+def test_an_empty_model_is_rejected(client):
+    assert client.post("/api/model", json={"name": "   "}).status_code == 422
+    assert client.get("/api/config").json()["model"] == "mock"
+
+
+def test_the_mock_backend_offers_no_model_suggestions(client):
+    body = client.get("/api/config").json()
+    assert body["available_models"] == []
+    assert body["model_locked"] is False
+
+
+def test_a_locked_model_cannot_be_switched(locked_client):
+    response = locked_client.post("/api/model", json={"name": "mock-two"})
+    assert response.status_code == 403
+    body = locked_client.get("/api/config").json()
+    assert body["model"] == "mock" and body["model_locked"] is True
+
+
+def test_the_page_is_told_about_the_new_model(client):
+    with client.websocket_connect("/ws") as socket:
+        _drain_until_ready(socket)
+        client.post("/api/model", json={"name": "mock-two"})
+        while (event := socket.receive_json())["type"] != "session":
+            pass
+    assert event["model"] == "mock-two"
 
 
 # ---------------------------------------------------------------- uploads

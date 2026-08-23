@@ -52,15 +52,25 @@
             <span class="label">prompt</span>
             <p class="prompt" id="prompt">…</p>
           </div>
-          <div class="field row">
-            <div>
-              <span class="label">model</span>
-              <p class="mono" id="model">…</p>
+          <div class="field">
+            <span class="label">model</span>
+            <div class="modelrow">
+              <input
+                id="modelInput"
+                class="mono"
+                list="modelList"
+                placeholder="owner/repo"
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <datalist id="modelList"></datalist>
+              <button class="ghost" id="modelApply">Load</button>
             </div>
-            <div>
-              <span class="label">backend</span>
-              <p class="mono" id="backend">…</p>
-            </div>
+            <span class="hint" id="modelHint"></span>
+          </div>
+          <div class="field">
+            <span class="label">backend</span>
+            <p class="mono" id="backend">…</p>
           </div>
           <div class="field">
             <span class="label">sampling</span>

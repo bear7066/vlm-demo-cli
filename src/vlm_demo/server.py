@@ -9,6 +9,7 @@ import mimetypes
 import re
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +26,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from vlm_demo.backends.registry import create_backend
-from vlm_demo.config import RunConfig
+from vlm_demo.config import BackendKind, RunConfig
 from vlm_demo.events import ErrorEvent, LibraryEvent, LibraryVideo, RunState, dump
 from vlm_demo.library import LibraryError, UploadTooLarge, VideoLibrary
+from vlm_demo.models import cached_model_ids
 from vlm_demo.scheduler import MediaClock, Scheduler
 from vlm_demo.session import Session
 from vlm_demo.video import VideoSource
@@ -39,8 +41,18 @@ CHUNK_SIZE = 512 * 1024
 RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
 
 
+class ModelSwitchDisabled(RuntimeError):
+    """Raised when the page asks for another model under ``--lock-model``."""
+
+
 class SelectRequest(BaseModel):
     """``POST /api/select`` — which video in the library to analyse next."""
+
+    name: str
+
+
+class ModelRequest(BaseModel):
+    """``POST /api/model`` — which model to load next; any id the backend accepts."""
 
     name: str
 
@@ -48,9 +60,11 @@ class SelectRequest(BaseModel):
 class AppState:
     """Everything the routes need, hung off ``app.state.run``.
 
-    One process serves one prompt/model, but the *video* is not fixed: it is whichever file
-    of the ``--input`` directory the page currently has selected, and switching it tears the
-    old run down and starts a fresh one (:meth:`select`).
+    One process serves one prompt, but neither the *video* nor the *model* is fixed. The video
+    is whichever file of the ``--input`` directory the page has selected (:meth:`select`); the
+    model is whichever id the page last asked for (:meth:`set_model`). Both tear the old run
+    down and start a fresh one, and both hold :attr:`_rebuild_lock` while they do, so they
+    cannot interleave. The *backend kind* is settled at startup and never changes.
     """
 
     def __init__(self, config: RunConfig) -> None:
@@ -62,7 +76,10 @@ class AppState:
             allow_delete=config.allow_delete,
         )
         self.backend = create_backend(config)
-        self.session = Session(config, self.backend.name)
+        # Only the local backend loads weights from the HuggingFace cache, so it is the only one
+        # we can offer a list for; everywhere else the page takes a typed-in id and nothing more.
+        self.models = cached_model_ids() if config.backend is BackendKind.TRANSFORMERS else []
+        self.session = Session(config, self.backend.name, available_models=self.models)
         self.video: VideoSource | None = None
         self.selected: str | None = None
         self.clock: MediaClock | None = None
@@ -70,7 +87,8 @@ class AppState:
         self.scheduler_task: asyncio.Task[None] | None = None
         self.backend_state = RunState.LOADING
         self.backend_detail = f"preparing {self.backend.name} backend"
-        self._select_lock = asyncio.Lock()
+        self.prepare_task: asyncio.Task[None] | None = None
+        self._rebuild_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ run state
 
@@ -107,6 +125,50 @@ class AppState:
         """
         await self.session.publish(self.library_event(), record=False)
 
+    # ------------------------------------------------------------------ the backend
+
+    def start_prepare(self) -> None:
+        """Warm the current backend up in the background; the page watches the status for it."""
+        self.prepare_task = asyncio.create_task(_prepare_backend(self))
+
+    async def stop_prepare(self) -> None:
+        """Drop the warm-up task, if any, and wait for it to stop touching the backend."""
+        task, self.prepare_task = self.prepare_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def set_model(self, name: str) -> None:
+        """Load ``name`` instead of the current model, keeping the video and everything else.
+
+        The backend *kind* is not re-inferred — a run started against vLLM stays on vLLM, this
+        only changes which model id it is pointed at. Whether ``name`` exists is not checked
+        here: :meth:`~vlm_demo.backends.base.VLMBackend.prepare` is what loads it, and a bad id
+        surfaces on the page exactly as a bad ``--model`` does at startup.
+        """
+        if self.config.lock_model:
+            raise ModelSwitchDisabled("model switching is disabled (--lock-model)")
+        name = name.strip()
+        if not name:
+            raise ValueError("model must not be empty")
+        if name == self.config.model:
+            return
+        async with self._rebuild_lock:
+            # Nothing else may hold the outgoing backend while we close it: a Scheduler keeps
+            # a reference to it, and a warm-up in flight would report its readiness as ours.
+            await self.stop_run()
+            await self.stop_prepare()
+            previous, self.config = self.backend, replace(self.config, model=name)
+            self.session.config = self.config
+            self.backend = create_backend(self.config)
+            await previous.aclose()
+            self.backend_state = RunState.LOADING
+            self.backend_detail = f"loading {name}"
+            # Same video, fresh feed: every response in the history came from the old model.
+            await self.session.retarget(self.session.video, *self.run_state())
+        self.start_prepare()
+
     # ------------------------------------------------------------------ selection
 
     async def select(self, name: str | None) -> None:
@@ -116,7 +178,7 @@ class AppState:
         :class:`~vlm_demo.video.VideoError` if it cannot be decoded — in both cases the
         current selection is left untouched.
         """
-        async with self._select_lock:
+        async with self._rebuild_lock:
             source: VideoSource | None = None
             meta = None
             if name is not None:
@@ -197,11 +259,11 @@ def create_app(config: RunConfig) -> FastAPI:
                 log.exception("could not open %s; starting with no video selected", default)
         else:
             log.info("%s holds no videos yet — upload one from the page", state.library.root)
-        prepare = asyncio.create_task(_prepare_backend(state))
+        state.start_prepare()
         try:
             yield
         finally:
-            prepare.cancel()
+            await state.stop_prepare()
             await state.stop_run()
             await state.backend.aclose()
             if state.video is not None:
@@ -237,6 +299,17 @@ def create_app(config: RunConfig) -> FastAPI:
             raise HTTPException(status_code=422, detail=f"cannot open {body.name}: {exc}") from exc
         return dump(state.session.describe())
 
+    @app.post("/api/model")
+    async def api_model(body: ModelRequest) -> dict[str, Any]:
+        """Point the run at another model. The page gets the new session on the websocket."""
+        try:
+            await state.set_model(body.name)
+        except ModelSwitchDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return dump(state.session.describe())
+
     @app.post("/api/videos", status_code=201)
     async def api_upload(
         request: Request,
@@ -247,13 +320,13 @@ def create_app(config: RunConfig) -> FastAPI:
         The body is the raw file, streamed straight to disk — one request per file, which
         keeps memory flat and gives the page a progress bar per upload.
         """
-        if not config.allow_upload:
+        if not state.config.allow_upload:
             raise HTTPException(status_code=403, detail="uploads are disabled (--no-upload)")
         declared = request.headers.get("content-length")
-        if declared and declared.isdigit() and int(declared) > config.max_upload_bytes:
+        if declared and declared.isdigit() and int(declared) > state.config.max_upload_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"upload exceeds the {config.max_upload_mb:g} MB limit",
+                detail=f"upload exceeds the {state.config.max_upload_mb:g} MB limit",
             )
         try:
             entry = await state.library.save(name, request.stream())
@@ -283,7 +356,7 @@ def create_app(config: RunConfig) -> FastAPI:
     @app.delete("/api/videos/{name}")
     async def api_delete(name: str) -> dict[str, Any]:
         """Remove one video from the ``--input`` directory. This deletes the file."""
-        if not config.allow_delete:
+        if not state.config.allow_delete:
             raise HTTPException(status_code=403, detail="deleting is disabled (--no-delete)")
         try:
             await state.delete(name)

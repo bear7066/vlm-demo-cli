@@ -165,7 +165,10 @@ class TransformersBackend(VLMBackend):
         return self._processor(text=[text], images=images, return_tensors="pt")
 
     async def aclose(self) -> None:
-        model, self._model, self._processor = self._model, None, None
-        if model is not None and self._torch is not None and self._torch.cuda.is_available():
-            del model
-            self._torch.cuda.empty_cache()
+        # Under the lock, so that switching models mid-load frees the weights the loader thread
+        # is still building rather than racing it and leaving them stranded on the GPU.
+        async with self._lock:
+            model, self._model, self._processor = self._model, None, None
+            if model is not None and self._torch is not None and self._torch.cuda.is_available():
+                del model
+                self._torch.cuda.empty_cache()

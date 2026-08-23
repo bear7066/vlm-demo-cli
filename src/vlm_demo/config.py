@@ -65,6 +65,8 @@ class RunConfig:
 
     allow_upload: bool = True
     allow_delete: bool = True
+    lock_model: bool = False
+    """Pin the model to ``--model``; the page may not switch it."""
     max_upload_mb: float = 1024.0
 
     highlight_regex: str = DEFAULT_HIGHLIGHT_REGEX

@@ -73,6 +73,10 @@ class SessionEvent(BaseModel):
     total_passes: int
     video: VideoInfo | None = None
     """``None`` until a video is selected — the directory may still be empty."""
+    available_models: list[str] = Field(default_factory=list)
+    """Models the page offers as suggestions; empty unless the backend loads them locally."""
+    model_locked: bool = False
+    """True under ``--lock-model``: the page shows the model but cannot change it."""
 
 
 class StatusEvent(BaseModel):

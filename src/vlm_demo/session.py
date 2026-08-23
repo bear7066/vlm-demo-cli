@@ -30,16 +30,24 @@ class Session:
     """One run: its config, its state, and every event it has produced so far.
 
     New connections (and page refreshes) replay :meth:`history`, so the feed survives a reload.
-    The selected video can change while the process lives (the user picks another one from the
-    ``--input`` directory), which starts the feed over — see :meth:`retarget`.
+    The selected video and the model can change while the process lives (the user picks
+    another video from the ``--input`` directory, or another model from the page), which starts
+    the feed over — see :meth:`retarget`. ``config`` is replaced wholesale on a model switch, so
+    read it through ``self`` rather than capturing it.
     """
 
     def __init__(
-        self, config: RunConfig, backend_name: str, video: VideoMeta | None = None
+        self,
+        config: RunConfig,
+        backend_name: str,
+        video: VideoMeta | None = None,
+        available_models: list[str] | None = None,
     ) -> None:
         self.config = config
         self.video = video
         self.backend_name = backend_name
+        self.available_models = list(available_models or ())
+        """Model ids the page offers as suggestions; fixed for the life of the process."""
         self.state = RunState.LOADING
         self._highlight = re.compile(config.highlight_regex)
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
@@ -61,6 +69,8 @@ class Session:
             highlight_regex=cfg.highlight_regex,
             total_passes=cfg.total_passes(video.duration) if video else 0,
             video=None if video is None else video_info(video),
+            available_models=self.available_models,
+            model_locked=cfg.lock_model,
         )
 
     async def retarget(self, video: VideoMeta | None, state: RunState, detail: str = "") -> None:
