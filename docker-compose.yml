@@ -9,10 +9,14 @@ services:
   vllm:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:gemma4-cu130}
     command:
+      # [deprecated] For missing KV-shared layers' models
       # The merged checkpoint (scripts/merge-base.py) — the raw finetune is missing
       # its KV-shared layers' tensors and vLLM refuses to load it. Served under the
       # original model name so the app's -m flag needs no change.
-      - ${MODEL_PATH:-/models/gemma-4-e2b-fall-merged}
+      # - ${MODEL_PATH:-/models/gemma-4-e2b-fall-merged}
+      - --model
+      - *model
+      # - THChou1220/gemma-4-e2b-kinetics54K-SQ_FFT # DEMO
       - --served-model-name
       - *model
       - --host
@@ -29,7 +33,7 @@ services:
       - HF_TOKEN
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
-      - ./models:/models:ro
+      # - ./models:/models:ro
     networks: [vlm]
 
   app:
