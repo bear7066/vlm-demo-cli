@@ -3,6 +3,22 @@
 Stream a video to a vision-language model and watch its responses appear, round by round, on a
 simple web page while the video plays.
 
+## Quick start
+
+```bash
+uv sync --extra gpu
+bash demo.sh
+```
+
+That runs the model in-process with `transformers` — no server, no container — and serves the UI
+on <http://localhost:3000>.
+
+Prefer a served model? `docker compose up` brings up vLLM plus this app on
+<http://localhost:3000>, with `MODEL=<repo-id>` in front of it to serve a different model. See
+[Docker](#docker).
+
+Or drive the CLI yourself:
+
 ```bash
 uv run vlm-demo \
   --input ./vids \
@@ -72,34 +88,39 @@ uv sync --extra gpu
 uv run vlm-demo -i ./vids -p "…" -m google/gemma-4-e4b-it --backend transformers
 ```
 
-## vLLM in Docker
+## Docker
 
 ```bash
-# just the model server (waits for readiness, sends a warmup request):
-./scripts/run-vllm.sh [model]
-uv run vlm-demo -i ./vids -p "…" --backend vllm \
-  -m THChou1220/gemma-4-e2b-kinetics54K-enhanced-fall_FFT
-
-# the whole stack: vLLM + this app on a private compose network, UI on port 3000
-./scripts/run-stack.sh          # = docker compose up --build
+docker compose up
 ```
 
-The gemma-4-e2b finetune checkpoint can't be served as-is: transformers deduplicates the tied
-KV tensors of the last `num_kv_shared_layers` layers on save, and vLLM then fails with
-*"Following weights were not initialized from checkpoint"*. `scripts/merge-base.py` copies
-those tensors back from `google/gemma-4-E2B-it` into `models/gemma-4-e2b-fall-merged/`;
-`run-stack.sh` runs it automatically, and both scripts serve the merged copy under the
-original model name so `-m` stays the same.
+That is the whole setup: it starts vLLM and this app on a private network and serves the UI on
+<http://localhost:3000>. Nothing else to build, merge or pre-download — the model is pulled from
+HuggingFace on first start (set `HF_TOKEN` for gated repos), so the first boot takes a few minutes
+while weights load.
 
-Both are tuned via env vars — `MODEL`, `VIDS` (the video folder, default `./vids`), `PROMPT`,
-`VLLM_IMAGE` (default: `vllm/vllm-openai:gemma4-cu130`, the local DGX Spark build), `HF_TOKEN`.
-Which clip runs is no longer a launch flag: the page picks it. `./vids` is mounted read-write so
-uploads from the page land on the host — files the container creates are owned by root, so
-`sudo chown` them if that gets in your way, or pass `--no-upload` / `--no-delete` in the
-compose command. The `vllm`
-backend polls `/v1/models` until the server is up (weights can take minutes to load) and then
-sends one dummy request with `--num-frames` grey frames at `--frame-max-size`, so processor
+Serve a different model with `MODEL`:
+
+```bash
+MODEL=google/gemma-4-E2B-it docker compose up
+```
+
+Other env knobs: `VIDS` (the video folder, default `./vids`), `PROMPT`, `VLLM_IMAGE` (default
+`vllm/vllm-openai:gemma4-cu130`, the local DGX Spark build), `HF_TOKEN`. Which clip runs is not a
+launch flag — the page picks it. `./vids` is mounted read-write so uploads from the page land on
+the host; files the container creates are owned by root, so `sudo chown` them if that gets in your
+way, or pass `--no-upload` / `--no-delete` in the compose command.
+
+The `vllm` backend polls `/v1/models` until the server is up (weights can take minutes to load) and
+then sends one dummy request with `--num-frames` grey frames at `--frame-max-size`, so processor
 init and CUDA graph capture are paid before your first real window.
+
+To run only the model server and drive it from a local checkout instead:
+
+```bash
+./scripts/run-vllm.sh [model]
+uv run vlm-demo -i ./vids -p "…" --backend vllm -m <model>
+```
 
 ## Choosing a video
 
