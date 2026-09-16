@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import mimetypes
+import os
 import re
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -32,6 +33,7 @@ from vlm_demo.library import LibraryError, UploadTooLarge, VideoLibrary
 from vlm_demo.models import cached_model_ids
 from vlm_demo.scheduler import MediaClock, Scheduler
 from vlm_demo.session import Session
+from vlm_demo.s3_library import S3VideoLibrary
 from vlm_demo.video import VideoSource
 
 log = logging.getLogger(__name__)
@@ -69,11 +71,16 @@ class AppState:
 
     def __init__(self, config: RunConfig) -> None:
         self.config = config
-        self.library = VideoLibrary(
-            config.input,
+        library_options = dict(
             max_upload_bytes=config.max_upload_bytes,
             allow_upload=config.allow_upload,
             allow_delete=config.allow_delete,
+        )
+        bucket = os.getenv("VLM_VIDEO_BUCKET")
+        self.library = (
+            S3VideoLibrary(config.input, bucket=bucket, **library_options)
+            if bucket
+            else VideoLibrary(config.input, **library_options)
         )
         self.backend = create_backend(config)
         # Only the local backend loads weights from the HuggingFace cache, so it is the only one
@@ -248,6 +255,8 @@ def create_app(config: RunConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if isinstance(state.library, S3VideoLibrary):
+            await asyncio.to_thread(state.library.restore)
         # Start on the first video in the directory, so the common case (a folder of clips)
         # behaves exactly like the old single-file flag. An empty folder is fine: the page
         # shows the uploader instead.

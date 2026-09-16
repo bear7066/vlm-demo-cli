@@ -122,6 +122,25 @@ To run only the model server and drive it from a local checkout instead:
 uv run vlm-demo -i ./vids -p "…" --backend vllm -m <model>
 ```
 
+### Persist uploaded videos on Render with Neon Object Storage
+
+Create a private Neon Object Storage bucket, then set these environment variables on the Render
+web service (alongside `VLM_BASE_URL` and `VLM_API_KEY` for the model):
+
+| Variable | Value |
+| --- | --- |
+| `VLM_VIDEO_BUCKET` | The bucket name, for example `vlm-demo-cli` |
+| `AWS_ENDPOINT_URL_S3` | The branch's S3 endpoint from Neon |
+| `AWS_REGION` | The branch's region, for example `us-east-2` |
+| `AWS_ACCESS_KEY_ID` | The branch's S3 access key ID |
+| `AWS_SECRET_ACCESS_KEY` | The branch's S3 secret access key |
+
+The app uploads each accepted video to the private bucket and restores the local playback cache
+from it when the service starts. A failed bucket connection stops startup instead of silently
+accepting uploads that would disappear later. Existing videos in Render's temporary filesystem
+are not migrated automatically; download and upload them again after enabling the bucket.
+Keep credentials in Render's environment settings, not in Git or the browser.
+
 ## Choosing a video
 
 `--input` is a directory, and the page's **videos** card lists every video directly inside it

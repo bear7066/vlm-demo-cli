@@ -7,3 +7,4 @@ vids/*.mp4
 vids/*.mov
 models/
 api.pdf
+.env*
