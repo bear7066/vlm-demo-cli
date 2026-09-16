@@ -22,7 +22,6 @@ const el = {
   modelList: document.getElementById("modelList"),
   modelApply: document.getElementById("modelApply"),
   modelHint: document.getElementById("modelHint"),
-  backend: document.getElementById("backend"),
   sampling: document.getElementById("sampling"),
   library: document.getElementById("library"),
   libdir: document.getElementById("libdir"),
@@ -95,10 +94,10 @@ function applySession(event) {
   session = event;
   el.prompt.textContent = event.prompt;
   applyModel(event);
-  el.backend.textContent = event.backend;
   el.sampling.textContent =
-    `${event.num_frames} frames from the last ${event.window_sec}s, ` +
-    `every ${event.pass_gap}s · pace=${event.pace}`;
+    `Every ${event.pass_gap}s of video: analyze up to ${event.num_frames} evenly spaced frames ` +
+    `from the preceding ${event.window_sec}s. ` +
+    (event.pace === "complete" ? "Every interval is analyzed." : "Late intervals may be skipped.");
   el.counter.textContent = `0 / ${event.total_passes} passes`;
   resetFeed();
 
@@ -303,7 +302,7 @@ function applyModel(event) {
   );
   el.modelInput.disabled = locked;
   el.modelApply.hidden = locked;
-  modelHint(locked ? "locked — started with --lock-model" : null);
+  modelHint(null);
   refreshModelControls();
 }
 
