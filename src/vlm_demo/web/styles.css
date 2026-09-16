@@ -418,15 +418,20 @@ button.vid:disabled {
    clips still reads as a list and not as a row of buttons. */
 button.vdel {
   flex: none;
-  width: 26px;
+  width: 32px;
   padding: 0;
+  display: grid;
+  place-items: center;
   border-radius: 6px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
-  font-size: 15px;
-  line-height: 1;
-  opacity: 0.55;
+  opacity: 0.75;
+}
+
+button.vdel svg {
+  width: 16px;
+  height: 16px;
 }
 
 .videos li:hover button.vdel {

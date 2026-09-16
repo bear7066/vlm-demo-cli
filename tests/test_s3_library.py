@@ -80,3 +80,22 @@ def test_app_restores_video_for_playback(monkeypatch, make_config, clip):
         response = client.get(f"/api/video/{clip.name}", headers={"Range": "bytes=0-9"})
         assert response.status_code == 206
         assert response.content == clip.read_bytes()[:10]
+
+
+def test_deleting_video_removes_bucket_object(monkeypatch, make_config, clip, tmp_path):
+    s3 = FakeS3()
+    s3.objects[f"videos/{clip.name}"] = clip.read_bytes()
+    monkeypatch.setenv("VLM_VIDEO_BUCKET", "vlm-demo-cli")
+    monkeypatch.setenv("AWS_ENDPOINT_URL_S3", "https://storage.example.test")
+    monkeypatch.setenv("AWS_REGION", "us-east-2")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    monkeypatch.setattr("vlm_demo.s3_library.boto3.client", lambda *args, **kwargs: s3)
+
+    root = tmp_path / "stored"
+    root.mkdir()
+    with TestClient(create_app(make_config(input=root, allow_delete=True))) as client:
+        assert client.get("/api/library").json()["deletes_enabled"] is True
+        assert client.delete(f"/api/videos/{clip.name}").status_code == 200
+        assert client.get("/api/library").json()["videos"] == []
+    assert s3.objects == {}

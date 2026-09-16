@@ -55,7 +55,9 @@ function send(type, extra = {}) {
         ...extra,
       }),
     );
+    return true;
   }
+  return false;
 }
 
 function setStatus(state, detail) {
@@ -66,6 +68,7 @@ function setStatus(state, detail) {
 function connect() {
   const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
   socket = new WebSocket(url);
+  socket.onopen = refreshStartButton;
   socket.onmessage = (event) => handle(JSON.parse(event.data));
   socket.onclose = () => {
     setStatus("offline", "reconnecting");
@@ -86,7 +89,8 @@ function resetFeed() {
 }
 
 function refreshStartButton() {
-  el.start.disabled = busy || !backendReady || !session || !session.video;
+  el.start.disabled =
+    busy || !backendReady || !session || !session.video || socket?.readyState !== WebSocket.OPEN;
 }
 
 function applySession(event) {
@@ -95,9 +99,8 @@ function applySession(event) {
   el.prompt.textContent = event.prompt;
   applyModel(event);
   el.sampling.textContent =
-    `Every ${event.pass_gap}s of video: analyze up to ${event.num_frames} evenly spaced frames ` +
-    `from the preceding ${event.window_sec}s. ` +
-    (event.pace === "complete" ? "Every interval is analyzed." : "Late intervals may be skipped.");
+    `影片每經過 ${event.pass_gap} 秒，就從前 ${event.window_sec} 秒均勻取最多 ${event.num_frames} 張畫面進行一次分析。` +
+    (event.pace === "complete" ? "每個時段都會分析。" : "來不及分析的時段可能略過。");
   el.counter.textContent = `0 / ${event.total_passes} passes`;
   resetFeed();
 
@@ -153,9 +156,9 @@ function applyLibrary(event) {
         remove.className = "vdel";
         remove.dataset.name = video.name;
         remove.disabled = busy;
-        remove.textContent = "\u00d7";
-        remove.title = `Delete ${video.name}`;
-        remove.setAttribute("aria-label", `Delete ${video.name}`);
+        remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 4h4M6 7l1 13h10l1-13M10 11v6m4-6v6"/></svg>';
+        remove.title = `刪除 ${video.name}`;
+        remove.setAttribute("aria-label", `刪除 ${video.name}`);
         item.append(remove);
       }
       return item;
@@ -168,7 +171,7 @@ function applyLibrary(event) {
   refreshStartButton();
 }
 
-function makeRow(kind, index, tStart, tEnd, text, right) {
+function makeRow(kind, index, tStart, tEnd, text) {
   const row = document.createElement("div");
   row.className = `row ${kind}`;
   const meta = document.createElement("div");
@@ -180,11 +183,6 @@ function makeRow(kind, index, tStart, tEnd, text, right) {
   span.textContent = `影片 ${tEnd.toFixed(1)} 秒`;
   if (tStart < tEnd) span.title = `分析影格：${tStart.toFixed(1)}–${tEnd.toFixed(1)} 秒`;
   meta.append(idx, span);
-  if (right) {
-    const extra = document.createElement("span");
-    extra.textContent = right;
-    meta.append(extra);
-  }
   const body = document.createElement("p");
   body.className = "text";
   body.textContent = text;
@@ -231,7 +229,6 @@ function handle(event) {
         event.t_start,
         event.t_end,
         "thinking",
-        `${event.frame_ts.length} frames`,
       );
       row.querySelector(".text").classList.add("dots");
       pending.set(event.index, appendRow(row));
@@ -245,7 +242,6 @@ function handle(event) {
         event.t_start,
         event.t_end,
         event.text,
-        `${Math.round(event.latency_ms)} ms · ${event.frames_used} frames`,
       );
       const placeholder = pending.get(event.index);
       if (placeholder) {
@@ -400,7 +396,7 @@ async function selectVideo(name) {
 
 async function deleteVideo(name) {
   if (busy) return;
-  if (!confirm(`Delete ${name}? This removes the file from the videos folder.`)) return;
+  if (!confirm(`確定刪除 ${name}？影片也會從儲存空間刪除。`)) return;
   setBusy(true);
   try {
     const response = await fetch(`/api/videos/${encodeURIComponent(name)}`, {
@@ -512,16 +508,24 @@ el.library.addEventListener("drop", (event) => {
 
 el.start.addEventListener("click", () => {
   if (!started) {
+    if (!send("start", { t: el.video.currentTime || 0 })) {
+      setStatus("offline", "reconnecting");
+      refreshStartButton();
+      return;
+    }
     started = true;
     resetFeed();
     el.start.textContent = "Restart";
-    send("start", { t: el.video.currentTime || 0 });
     el.video.play();
   } else {
+    if (!send("start", { t: 0 })) {
+      setStatus("offline", "reconnecting");
+      refreshStartButton();
+      return;
+    }
     el.video.pause();
     el.video.currentTime = 0;
     resetFeed();
-    send("start", { t: 0 });
     el.video.play();
   }
 });
