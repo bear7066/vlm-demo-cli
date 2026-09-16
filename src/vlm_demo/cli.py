@@ -69,7 +69,7 @@ def run(
         typer.Option("--pace", help="realtime: skip late windows. complete: run every window."),
     ] = Pace.REALTIME,
     max_inflight: Annotated[
-        int, typer.Option("--max-inflight", help="Concurrent passes (realtime pace only).")
+        int, typer.Option("--max-inflight", help="Maximum concurrent inference passes.")
     ] = 1,
     host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", help="Port for the web UI.")] = 3000,

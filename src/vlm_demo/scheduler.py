@@ -21,7 +21,7 @@ from vlm_demo.events import (
     RunState,
 )
 from vlm_demo.session import Session
-from vlm_demo.video import VideoSource, Window
+from vlm_demo.video import Frame, VideoSource, Window
 
 log = logging.getLogger(__name__)
 
@@ -136,7 +136,21 @@ class Scheduler:
                     else:
                         self._spawn(index)
                 else:
-                    await self._run_pass(index)
+                    while self._inflight >= cfg.max_inflight and not self._stopped:
+                        await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
+                    if self._stopped:
+                        break
+                    # VideoSource shares one decoder; extract in order before launching
+                    # concurrent network requests.
+                    try:
+                        prepared = await self._prepare_pass(index)
+                    except Exception as exc:
+                        log.exception("pass %d failed", index)
+                        await self.session.publish(
+                            ErrorEvent(index=index, message=f"pass {index} failed: {exc}")
+                        )
+                    else:
+                        self._spawn(index, prepared)
                 index += 1
 
             if self._tasks:
@@ -144,8 +158,11 @@ class Scheduler:
         except asyncio.CancelledError:
             raise
         finally:
-            for task in list(self._tasks):
+            pending = list(self._tasks)
+            for task in pending:
                 task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
 
         if not self._stopped:
             await self.session.set_state(RunState.FINISHED, "run complete")
@@ -169,9 +186,9 @@ class Scheduler:
             return max(1, wanted)
         return index
 
-    def _spawn(self, index: int) -> None:
+    def _spawn(self, index: int, prepared: tuple[Window, list[Frame]] | None = None) -> None:
         self._inflight += 1
-        task = asyncio.create_task(self._run_pass(index, release=True))
+        task = asyncio.create_task(self._run_pass(index, prepared=prepared))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -198,31 +215,35 @@ class Scheduler:
                 PassSkippedEvent(index=index, t_start=t_start, t_end=t_end, reason=reason)
             )
 
-    async def _run_pass(self, index: int, release: bool = False) -> None:
+    async def _prepare_pass(self, index: int) -> tuple[Window, list[Frame]]:
         cfg = self.config
-        duration = self.video.meta.duration
-        t_start, t_end = cfg.window_for(index, duration)
+        t_start, t_end = cfg.window_for(index, self.video.meta.duration)
         window = Window(index=index, t_start=t_start, t_end=t_end)
+        frames = await asyncio.to_thread(self.video.extract_window, window, cfg.num_frames)
+        await self.session.publish(
+            PassStartedEvent(
+                index=index,
+                t_start=t_start,
+                t_end=t_end,
+                frame_ts=[round(frame.t, 3) for frame in frames],
+            )
+        )
+        return window, frames
+
+    async def _run_pass(
+        self, index: int, prepared: tuple[Window, list[Frame]] | None = None
+    ) -> None:
+        cfg = self.config
         try:
-            frames = await asyncio.to_thread(
-                self.video.extract_window, window, cfg.num_frames
-            )
-            await self.session.publish(
-                PassStartedEvent(
-                    index=index,
-                    t_start=t_start,
-                    t_end=t_end,
-                    frame_ts=[round(frame.t, 3) for frame in frames],
-                )
-            )
+            window, frames = prepared or await self._prepare_pass(index)
             result = await asyncio.wait_for(
                 self.backend.infer(cfg.prompt, frames, window), timeout=cfg.infer_timeout
             )
             await self.session.publish(
                 PassResultEvent(
                     index=index,
-                    t_start=t_start,
-                    t_end=t_end,
+                    t_start=window.t_start,
+                    t_end=window.t_end,
                     text=result.text,
                     latency_ms=round(result.latency_ms, 1),
                     frames_used=len(frames),
@@ -241,5 +262,4 @@ class Scheduler:
                 ErrorEvent(index=index, message=f"pass {index} failed: {exc}")
             )
         finally:
-            if release:
-                self._inflight -= 1
+            self._inflight -= 1

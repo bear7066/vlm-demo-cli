@@ -197,8 +197,8 @@ inference pass takes longer than `--pass-gap`:
 
 - `realtime` (default) — windows whose deadline has already slipped are **skipped** (and shown as
   a muted marker in the feed). Responses always describe what is on screen right now.
-- `complete` — nothing is skipped, so you always get `ceil(duration / pass_gap)` responses, but
-  the feed can lag behind playback.
+- `complete` — nothing is skipped, so you always get `ceil(duration / pass_gap)` responses.
+  Up to `--max-inflight` API requests run together; the feed can still lag behind playback.
 
 Measured on a V100 with `google/gemma-4-E2B-it`, fp16, 4 frames at 512px: ~3s for the first pass
 then ~0.75s each. Bigger models, more frames or larger frames push past the default 1s gap, so on
@@ -217,7 +217,7 @@ this class of hardware raise `--pass-gap` (2–3s is comfortable) or switch to `
 | `--num-frames` | `8` | Frames sampled per window. |
 | `--pass-gap` | `1.0` | Video seconds between inference passes. |
 | `--pace` | `realtime` | `realtime` or `complete`. |
-| `--max-inflight` | `1` | Concurrent inference passes (`realtime` only). |
+| `--max-inflight` | `1` | Maximum concurrent inference passes in either pace mode. |
 | `--host` / `--port` | `127.0.0.1` / `3000` | Where the web UI is served. |
 | `--open / --no-open` | `--open` | Open the browser automatically. |
 | `--frame-max-size` | `512` | Longest side of each frame, in pixels. |
