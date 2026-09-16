@@ -178,7 +178,8 @@ function makeRow(kind, index, tStart, tEnd, text, right) {
   idx.className = "idx";
   idx.textContent = `#${index}`;
   const span = document.createElement("span");
-  span.textContent = `${tStart.toFixed(1)}s – ${tEnd.toFixed(1)}s`;
+  span.textContent = `影片 ${tEnd.toFixed(1)} 秒`;
+  if (tStart < tEnd) span.title = `分析影格：${tStart.toFixed(1)}–${tEnd.toFixed(1)} 秒`;
   meta.append(idx, span);
   if (right) {
     const extra = document.createElement("span");
@@ -273,11 +274,15 @@ function handle(event) {
       break;
     }
 
-    case "error":
+    case "error": {
+      const at = event.index && session
+        ? Math.min(event.index * session.pass_gap, session.video?.duration ?? Infinity)
+        : el.video.currentTime;
       appendRow(
-        makeRow("err", event.index ?? 0, el.video.currentTime, el.video.currentTime, event.message),
+        makeRow("err", event.index ?? 0, at, at, event.message),
       );
       break;
+    }
   }
 }
 
